@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+
+# 登录会话(SESSDATA / bili_jct 明文,绝不入库)
+data/
+.env
+.env.*
+
+# 改动前的历史快照
+backup/
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

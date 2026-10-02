@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>搜索</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/common.css" />
+<style>
+  /* 内容区:两侧留白收窄,卡片随之变大(再宽就会多出一列,反而更小) */
+  .content {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 20px 18px 60px;
+  }
+
+  .meta-row {
+    color: var(--text-2);
+    font-size: 13px;
+    margin: 4px 0 16px;
+    min-height: 18px;
+  }
+  .meta-row b { color: var(--pink); font-weight: 600; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 20px 16px;
+  }
+
+  /* 卡片不再有底色、也不整块可点:只有封面和标题是播放页入口 */
+  .card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+  }
+  .card, .card:link, .card:visited, .card:hover, .card:active,
+  .card *, .card *:link, .card *:visited, .card *:hover, .card *:active {
+    text-decoration: none;
+  }
+  /* 标题只在光标落在标题文字本身时才变粉 */
+  /* 标题文字本身才是入口,样式见下面 .title-text */
+  /* 骨架屏不是真卡片,封面不给手型光标 */
+  .card.skeleton-card .thumb-wrap { cursor: default; }
+
+  .thumb-wrap {
+    display: block;
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    background: var(--thumb-bg);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .thumb-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .thumb-wrap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 40%;
+    background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
+    pointer-events: none;
+  }
+  .duration {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    background: rgba(0,0,0,.6);
+    color: #fff;
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    z-index: 1;
+  }
+  .thumb-stats {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    display: flex;
+    gap: 8px;
+    color: #fff;
+    font-size: 12px;
+    z-index: 1;
+  }
+  .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .stat-item svg { flex-shrink: 0; }
+
+  .card-body { padding: 8px 2px 6px; }
+  .title {
+    font-size: 14px;
+    line-height: 1.4;
+    height: 2.8em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    color: var(--text);
+    margin: 0 0 6px;
+  }
+  /* 标题文字外面包一层行内元素:块级 .title 占满整行(为了两行截断),
+     只让文字本身当点击/悬停区,右侧与第二行的留白不响应 */
+  .title-text {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color .12s ease;
+  }
+  .title-text:hover { color: var(--pink); }
+  .title em {
+    color: var(--pink);
+    font-style: normal;
+  }
+  .author {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .author svg { flex-shrink: 0; color: var(--text-3); }
+  .author span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* :hover 规则直接给这个 span 上色,所以它自己也必须有 transition,
+       否则只有 <a> 和角标在渐变、文字是硬跳色 */
+    transition: color .12s ease;
+  }
+  /* UP 这一行(角标 + 用户名 + 发布日期)整体是一个链接,指向 TA 的个人主页,
+     角标和文字都在 <a> 里,悬停任意一处三者一起变粉、点击行为一致 */
+  .author-link {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    color: var(--text-3);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color .12s ease;
+  }
+  .author-link svg { transition: color .12s ease; }
+  .author-link:hover,
+  .author-link:hover svg,
+  .author-link:hover .author-name {
+    color: var(--pink);
+  }
+
+  /* 空状态 / 提示 / 加载 */
+  .placeholder, .error-box {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-3);
+    font-size: 14px;
+  }
+  .error-box { color: var(--pink-dark); }
+  .placeholder svg { margin-bottom: 12px; opacity: .5; }
+
+  /* 骨架卡片与真实卡片同结构,高度一致,替换成真卡片时下方内容不跳动 */
+  .skeleton-card .thumb-wrap { background: linear-gradient(90deg, var(--skeleton-1), var(--skeleton-2), var(--skeleton-1)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+  .skeleton-line { height: 12px; background: var(--skeleton-1); border-radius: 4px; margin-top: 8px; }
+  /* 标题两条占位按 1.4 行高在 2.8em 里均分,和真实标题的两行等高 */
+  .skeleton-card .title { display: flex; flex-direction: column; justify-content: space-around; }
+  .skeleton-card .title .skeleton-line { height: 1em; margin: 0; }
+  /* UP 名占位靠一个透明字撑出行高(可见的只有色块),行高与真实卡片一致 */
+  .skeleton-card .author-name { width: 45%; height: auto; margin: 0; color: transparent; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  .bvid-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 32px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--toast-bg);
+    color: #fff;
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+    white-space: nowrap;
+  }
+  .bvid-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .bvid-toast b { color: var(--pink); }
+
+  @media (max-width: 600px) {
+    .content { padding: 16px 14px 40px; }
+  }
+
+  /* 筛选栏: 排序一排、筛选一排,各自换行 */
+  .filter-bar {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 0 16px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .filter-bar.show { display: flex; }
+  .filter-group {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  /* 视频与用户各用一组选项,互斥显示,由 updateFilterBar 决定挂哪个类 */
+  .filter-bar .filter-group { display: none; }
+  .filter-bar .filter-group.type-video,
+  .filter-bar .filter-group.type-user { display: flex; }
+  .sort-tab {
+    border: none;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 14px;
+    padding: 5px 12px;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: color .15s ease, background .15s ease;
+    white-space: nowrap;
+  }
+  .sort-tab:hover { color: var(--pink); }
+  .sort-tab.active {
+    color: var(--on-brand);
+    background: var(--pink);
+    font-weight: 600;
+  }
+
+  @media (max-width: 600px) {
+    .filter-bar { gap: 10px; }
+    .filter-group { gap: 6px; }
+  }
+
+  /* 结果类型(视频 / 用户)切换 */
+  .type-group {
+    display: none;
+    gap: 4px;
+    margin-top: 16px;
+  }
+  .type-group.show { display: flex; }
+  .type-group .sort-tab { font-size: 15px; padding: 6px 16px; }
+
+  /* 用户结果: 一行一个,头像 + 昵称/签名 + 粉丝与投稿数。
+     类名统一带 sp- 前缀,避免和 common.css 里顶部登录入口的 .user-avatar/.user-name 撞名 */
+  .sp-users { display: flex; flex-direction: column; gap: 8px; }
+  .sp-user-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    background: var(--card);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: box-shadow .15s ease;
+  }
+  .sp-user-row:hover { box-shadow: 0 2px 12px var(--shadow); }
+  .sp-user-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--fill);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sp-user-main { flex: 1; min-width: 0; }
+  .sp-user-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .sp-user-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: color .12s ease;
+  }
+  .sp-user-name em { color: var(--pink); font-style: normal; }
+  .sp-user-row:hover .sp-user-name { color: var(--pink); }
+  .sp-user-verify {
+    flex-shrink: 0;
+    max-width: 40%;
+    font-size: 11px;
+    line-height: 1.6;
+    padding: 0 6px;
+    border-radius: 3px;
+    background: var(--mark-bg);
+    color: var(--mark-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sp-user-meta {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sp-user-meta b { color: var(--text-2); font-weight: 600; }
+  .sp-user-sign {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sp-user-follow {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: inherit;
+    border: 1px solid var(--pink);
+    border-radius: 14px;
+    background: var(--pink);
+    color: var(--on-brand);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .sp-user-follow:hover { background: var(--pink-dark); border-color: var(--pink-dark); }
+  .sp-user-follow.following {
+    background: var(--card);
+    color: var(--text-2);
+    border-color: var(--border);
+  }
+  .sp-user-follow.following:hover {
+    color: var(--pink-dark);
+    border-color: var(--pink-dark);
+    background: var(--card);
+  }
+  .sp-user-follow:disabled { cursor: default; opacity: .6; }
+  .sp-user-follow.self {
+    background: var(--fill);
+    border-color: var(--border);
+    color: var(--text-3);
+  }
+  .sp-user-follow.self:hover { background: var(--hover); border-color: var(--border); }
+
+  .sp-user-skeleton {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    background: var(--card);
+    border-radius: 8px;
+  }
+  .sp-user-skeleton .sp-user-skeleton-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: linear-gradient(90deg, var(--skeleton-1), var(--skeleton-2), var(--skeleton-1));
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+  }
+  .sp-user-skeleton .sp-user-skeleton-body { flex: 1; }
+  .sp-user-skeleton .skeleton-line { margin-top: 0; }
+  .sp-user-skeleton .skeleton-line + .skeleton-line { margin-top: 8px; }
+
+  /* 分页 */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 28px;
+    flex-wrap: wrap;
+  }
+  .page-btn {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-2);
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .page-btn:hover:not(:disabled):not(.active) {
+    border-color: var(--pink);
+    color: var(--pink);
+  }
+  .page-btn.active {
+    background: var(--pink);
+    border-color: var(--pink);
+    color: var(--on-brand);
+    cursor: default;
+  }
+  .page-btn:disabled:not(.active) {
+    color: var(--text-3);
+    cursor: not-allowed;
+    opacity: .5;
+  }
+  .page-ellipsis {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="/" title="回到首页">
+      <img class="logo-img" src="/pilipawa-logo.png" alt="pilipawa" />
+    </a>
+    <div class="search-wrap">
+      <form class="search-box" id="searchForm">
+        <input id="keyword" type="text" placeholder="搜索你感兴趣的视频" autocomplete="off" />
+        <button class="icon-btn" type="submit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2"/>
+            <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </form>
+      <div class="history-dropdown" id="historyDropdown"></div>
+    </div>
+    <div class="nav-actions">
+      <div class="login-slot" id="loginSlot">
+        <button class="login-btn" type="button" onclick="openLoginModal()">登录</button>
+      </div>
+      <a class="icon-btn" href="/settings" title="设置" aria-label="设置">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 扫码登录弹窗(登录 B 站账号,不是本站账号体系) -->
+<div class="login-modal-mask" id="loginModalMask" style="display:none;">
+  <div class="login-modal">
+    <button class="login-modal-close" type="button" onclick="closeLoginModal()">&times;</button>
+    <p class="login-modal-title">扫码登录 B 站账号</p>
+    <div class="login-qrcode-box">
+      <img id="loginQrcodeImg" width="180" height="180" alt="登录二维码" />
+      <div class="login-qrcode-mask" id="loginQrcodeMask">
+        <p id="loginQrcodeMaskText"></p>
+        <button class="login-refresh-btn" id="loginRefreshBtn" type="button" onclick="startLoginFlow()">刷新二维码</button>
+      </div>
+    </div>
+    <p class="login-modal-tip">请使用哔哩哔哩客户端扫码登录</p>
+  </div>
+</div>
+
+<div class="content">
+  <div class="type-group" id="typeGroup">
+    <button class="sort-tab active" data-type="video">视频</button>
+    <button class="sort-tab" data-type="user">用户</button>
+  </div>
+  <div class="filter-bar" id="filterBar">
+    <div class="filter-group" id="sortGroup">
+      <button class="sort-tab active" data-order="">综合排序</button>
+      <button class="sort-tab" data-order="click">最多播放</button>
+      <button class="sort-tab" data-order="pubdate">最新发布</button>
+      <button class="sort-tab" data-order="dm">最多弹幕</button>
+      <button class="sort-tab" data-order="stow">最多收藏</button>
+    </div>
+    <div class="filter-group" id="userSortGroup">
+      <button class="sort-tab active" data-user-order="" data-order-sort="0">默认排序</button>
+      <button class="sort-tab" data-user-order="fans" data-order-sort="0">粉丝数由高到低</button>
+      <button class="sort-tab" data-user-order="fans" data-order-sort="1">粉丝数由低到高</button>
+      <button class="sort-tab" data-user-order="level" data-order-sort="0">Lv等级由高到低</button>
+      <button class="sort-tab" data-user-order="level" data-order-sort="1">Lv等级由低到高</button>
+    </div>
+    <div class="filter-group" id="userTypeGroup">
+      <button class="sort-tab active" data-user-type="0">全部用户</button>
+      <button class="sort-tab" data-user-type="1">UP 主用户</button>
+      <button class="sort-tab" data-user-type="2">普通用户</button>
+      <button class="sort-tab" data-user-type="3">认证用户</button>
+    </div>
+  </div>
+  <div class="meta-row" id="metaRow"></div>
+
+  <div id="results"></div>
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<div class="bvid-toast" id="bvidToast"></div>
+
+<script src="/common.js"></script>
+<script>
+const form = document.getElementById('searchForm');
+const input = document.getElementById('keyword');
+const results = document.getElementById('results');
+const metaRow = document.getElementById('metaRow');
+const pagination = document.getElementById('pagination');
+const typeGroup = document.getElementById('typeGroup');
+const filterBar = document.getElementById('filterBar');
+const sortGroup = document.getElementById('sortGroup');
+const userSortGroup = document.getElementById('userSortGroup');
+const userTypeGroup = document.getElementById('userTypeGroup');
+
+let currentKeyword = '';
+let currentPage = 1;
+let totalPages = 1;
+let currentOrder = '';
+let currentUserOrder = '';
+let currentUserSort = '0';
+let currentUserType = '0';
+let currentType = 'video';
+
+function formatCount(n) {
+  if (n == null) return '-';
+  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(n);
+}
+
+function formatDate(pubdate) {
+  // 上游通常返回 unix 时间戳(秒),也兼容字符串形式的日期
+  if (pubdate == null || pubdate === '') return '';
+  let d;
+  if (typeof pubdate === 'number' || /^\d+$/.test(pubdate)) {
+    d = new Date(Number(pubdate) * 1000);
+  } else {
+    d = new Date(pubdate);
+  }
+  if (isNaN(d.getTime())) return '';
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${mm}-${dd}`;
+}
+
+function formatDuration(sec) {
+  // 上游可能给 "mm:ss" / "hh:mm:ss" 字符串,也可能给秒数
+  let totalSeconds;
+  if (typeof sec === 'string' && sec.includes(':')) {
+    const parts = sec.split(':').map((p) => parseInt(p, 10) || 0);
+    if (parts.length === 3) {
+      totalSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) {
+      totalSeconds = parts[0] * 60 + parts[1];
+    } else {
+      totalSeconds = parts[0] || 0;
+    }
+  } else {
+    totalSeconds = parseInt(sec, 10) || 0;
+  }
+
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function renderSkeleton() {
+  results.innerHTML = currentType === 'user'
+    ? `<div class="sp-users">${skeletonUsersHTML(8)}</div>`
+    : `<div class="grid">${skeletonCardsHTML(12)}</div>`;
+  pagination.innerHTML = '';
+}
+
+function renderError(msg) {
+  results.innerHTML = `<div class="error-box">${msg}</div>`;
+  pagination.innerHTML = '';
+}
+
+function renderEmpty(keyword) {
+  const what = currentType === 'user' ? '用户' : '视频';
+  results.innerHTML = `<div class="placeholder">没有找到与「${keyword}」相关的${what}</div>`;
+  pagination.innerHTML = '';
+}
+
+// 生成页码列表: 当前页附近展开,远处用省略号折叠,例如 1 … 4 5 [6] 7 8 … 20
+function buildPageNumbers(current, total) {
+  const pages = [];
+  const windowSize = 2;
+  const add = (p) => pages.push(p);
+
+  add(1);
+  if (current - windowSize > 2) add('...');
+  for (let p = Math.max(2, current - windowSize); p <= Math.min(total - 1, current + windowSize); p++) {
+    add(p);
+  }
+  if (current + windowSize < total - 1) add('...');
+  if (total > 1) add(total);
+
+  return pages;
+}
+
+function renderPagination() {
+  if (!currentKeyword || totalPages <= 1) {
+    pagination.innerHTML = '';
+    return;
+  }
+
+  const pages = buildPageNumbers(currentPage, totalPages);
+
+  const pageButtons = pages.map((p) => {
+    if (p === '...') return `<span class="page-ellipsis">…</span>`;
+    const active = p === currentPage ? 'active' : '';
+    return `<button class="page-btn ${active}" data-page="${p}" ${p === currentPage ? 'disabled' : ''}>${p}</button>`;
+  }).join('');
+
+  pagination.innerHTML = `
+    <button class="page-btn" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>‹</button>
+    ${pageButtons}
+    <button class="page-btn" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>›</button>
+  `;
+}
+
+sortGroup.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sort-tab');
+  if (!btn || btn.classList.contains('active')) return;
+  sortGroup.querySelectorAll('.sort-tab').forEach((el) => el.classList.remove('active'));
+  btn.classList.add('active');
+  currentOrder = btn.dataset.order || '';
+  if (currentKeyword) doSearch(currentKeyword, 1);
+});
+
+// 用户排序: 档位由"字段 + 方向"唯一确定(空字段表示默认排序),选项互斥
+userSortGroup.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sort-tab');
+  if (!btn || btn.classList.contains('active')) return;
+  userSortGroup.querySelectorAll('.sort-tab').forEach((el) => el.classList.remove('active'));
+  btn.classList.add('active');
+  currentUserOrder = btn.dataset.userOrder || '';
+  currentUserSort = btn.dataset.orderSort || '0';
+  if (currentKeyword) doSearch(currentKeyword, 1);
+});
+
+// 用户分类筛选: 换筛选等于换一份结果,回到第 1 页重搜
+userTypeGroup.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sort-tab');
+  if (!btn || btn.classList.contains('active')) return;
+  userTypeGroup.querySelectorAll('.sort-tab').forEach((el) => el.classList.remove('active'));
+  btn.classList.add('active');
+  currentUserType = btn.dataset.userType;
+  if (currentKeyword) doSearch(currentKeyword, 1);
+});
+
+// 视频 / 用户切换: 换类型等于换一份结果,回到第 1 页重搜
+typeGroup.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sort-tab');
+  if (!btn || btn.classList.contains('active')) return;
+  typeGroup.querySelectorAll('.sort-tab').forEach((el) => el.classList.remove('active'));
+  btn.classList.add('active');
+  currentType = btn.dataset.type;
+  updateFilterBar();
+  if (currentKeyword) doSearch(currentKeyword, 1);
+});
+
+// 排序/筛选栏整体只在有结果时出现,里面显示哪两组选项由当前类型决定
+function updateFilterBar() {
+  const isUser = currentType === 'user';
+  filterBar.classList.toggle('show', !!currentKeyword);
+  sortGroup.classList.toggle('type-video', !isUser);
+  userSortGroup.classList.toggle('type-user', isUser);
+  userTypeGroup.classList.toggle('type-user', isUser);
+}
+
+pagination.addEventListener('click', (e) => {
+  const btn = e.target.closest('.page-btn');
+  if (!btn || btn.disabled) return;
+  const page = parseInt(btn.dataset.page, 10);
+  if (!page || page < 1 || page > totalPages || page === currentPage) return;
+  doSearch(currentKeyword, page);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+function stripHtml(html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}
+
+// 昵称/签名含上游的高亮标签,除文本外一律转义后再拼进 innerHTML
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// 昵称只保留 <em class="keyword"> 高亮标签,其余标签去掉
+function sanitizeName(raw) {
+  return escapeHtml(raw)
+    .replace(/&lt;em class=&quot;keyword&quot;&gt;/g, '<em class="keyword">')
+    .replace(/&lt;\/em&gt;/g, '</em>');
+}
+
+function cardHTML(item) {
+  return `
+    <div class="card">
+      <a class="thumb-wrap" href="/player?bv=${item.bvid}">
+        <img src="${item.pic}" loading="lazy" alt="" referrerpolicy="no-referrer" onerror="this.style.opacity=0" />
+        <span class="thumb-stats">
+          <span class="stat-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M4 4.5C4 3.6 4.99 3.05 5.75 3.52L19.5 12L5.75 20.48C4.99 20.95 4 20.4 4 19.5V4.5Z" fill="currentColor" transform="translate(6.6,6) scale(0.5)"/>
+            </svg>
+            ${formatCount(item.play)}
+          </span>
+          <span class="stat-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="1.6"/>
+              <line x1="6" y1="9.5" x2="15" y2="9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <line x1="6" y1="14.5" x2="18" y2="14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            ${formatCount(item.danmaku)}
+          </span>
+        </span>
+        <span class="duration">${formatDuration(item.duration)}</span>
+      </a>
+      <div class="card-body">
+        <p class="title" title="${stripHtml(item.title).replace(/"/g, '&quot;')}"><a class="title-text" href="/player?bv=${item.bvid}">${item.title}</a></p>
+        <div class="author">
+          <a class="author-link" href="/account?mid=${item.authorMid || 0}" data-mid="${item.authorMid || 0}">
+            <svg width="16" height="13" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg">
+              <rect x="0.5" y="0.5" width="23" height="19" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+              <text x="12" y="14" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Roboto, sans-serif">UP</text>
+            </svg>
+            <span class="author-name">${item.author}${item.pubdate ? ` · ${formatDate(item.pubdate)}` : ''}</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderResults(list) {
+  results.innerHTML = currentType === 'user'
+    ? `<div class="sp-users">${list.map(userCardHTML).join('')}</div>`
+    : `<div class="grid">${list.map(cardHTML).join('')}</div>`;
+}
+
+function userFollowHTML(item) {
+  if (item.isSelf) {
+    return `<button class="sp-user-follow self" type="button" disabled>自己</button>`;
+  }
+  return item.isFollowing
+    ? `<button class="sp-user-follow following" type="button" data-mid="${item.mid}" data-following="1">已关注</button>`
+    : `<button class="sp-user-follow" type="button" data-mid="${item.mid}" data-following="0">+ 关注</button>`;
+}
+
+function userCardHTML(item) {
+  const avatar = item.avatar ? escapeHtml(item.avatar) : '';
+  const verify = item.verify
+    ? `<span class="sp-user-verify" title="${escapeHtml(item.verify)}">${escapeHtml(item.verify)}</span>`
+    : '';
+  const sign = item.sign
+    ? `<div class="sp-user-sign" title="${escapeHtml(stripHtml(item.sign))}">${item.sign}</div>`
+    : '';
+
+  return `
+    <div class="sp-user-row" data-mid="${item.mid}">
+      <img class="sp-user-avatar" src="${avatar}" loading="lazy" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" />
+      <div class="sp-user-main">
+        <div class="sp-user-name-row">
+          <span class="sp-user-name">${sanitizeName(item.name)}</span>
+          ${verify}
+        </div>
+        <div class="sp-user-meta">粉丝 <b>${formatCount(item.fans)}</b> · 投稿 <b>${formatCount(item.videos)}</b></div>
+        ${sign}
+      </div>
+      ${userFollowHTML(item)}
+    </div>
+  `;
+}
+
+// 与 cardHTML 同样的标签层级:封面比例、标题两行、UP 名那一行占的高度都对齐
+function skeletonCardsHTML(count) {
+  return Array.from({ length: count }).map(() => `
+    <div class="card skeleton-card">
+      <div class="thumb-wrap"></div>
+      <div class="card-body">
+        <p class="title">
+          <span class="skeleton-line" style="width:90%"></span>
+          <span class="skeleton-line" style="width:58%"></span>
+        </p>
+        <div class="author">
+          <span class="author-name skeleton-line">占位</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function skeletonUsersHTML(count) {
+  return Array.from({ length: count }).map(() => `
+    <div class="sp-user-skeleton">
+      <div class="sp-user-skeleton-avatar"></div>
+      <div class="sp-user-skeleton-body">
+        <div class="skeleton-line" style="width:30%"></div>
+        <div class="skeleton-line" style="width:50%"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderInitialPlaceholder() {
+  currentKeyword = '';
+  totalPages = 1;
+  typeGroup.classList.remove('show');
+  updateFilterBar();
+  metaRow.textContent = '';
+  pagination.innerHTML = '';
+  results.innerHTML = `<div class="placeholder">输入关键词,搜索你感兴趣的视频或用户吧</div>`;
+  document.title = '搜索 - B站视频搜索器';
+}
+
+// 把当前的类型/关键词/页码/排序同步到地址栏,这样搜索结果页可以直接刷新、前进后退、分享链接
+function syncUrl(keyword, page, type, order) {
+  const params = new URLSearchParams({ keyword });
+  if (page > 1) params.set('page', String(page));
+  if (type === 'user') {
+    params.set('type', type);
+    if (currentUserOrder) {
+      params.set('userOrder', currentUserOrder);
+      if (currentUserSort === '1') params.set('orderSort', '1');
+    }
+    if (currentUserType !== '0') params.set('userType', currentUserType);
+  } else if (order) {
+    params.set('order', order);
+  }
+  const newUrl = `/search?${params.toString()}`;
+  const currentUrl = location.pathname + location.search;
+  if (newUrl === currentUrl) return;
+  history.pushState({ keyword, page, type, order }, '', newUrl);
+}
+
+async function doSearch(keyword, page = 1) {
+  if (!keyword) return;
+  currentKeyword = keyword;
+  currentPage = page;
+  metaRow.textContent = '';
+  typeGroup.classList.add('show');
+  updateFilterBar();
+  document.title = `${keyword} - 搜索`;
+  renderSkeleton();
+
+  try {
+    const params = new URLSearchParams({
+      keyword,
+      page: String(page),
+      type: currentType,
+    });
+    if (currentType === 'user') {
+      params.set('userOrder', currentUserOrder);
+      params.set('userType', currentUserType);
+      if (currentUserOrder) params.set('orderSort', currentUserSort);
+    } else {
+      params.set('order', currentOrder);
+    }
+    const res = await fetch(`/api/search?${params.toString()}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      renderError(data.error || '搜索失败,请稍后再试');
+      totalPages = 1;
+      syncUrl(keyword, page, currentType, currentOrder);
+      return;
+    }
+
+    if (!data.list || data.list.length === 0) {
+      renderEmpty(keyword);
+      totalPages = 1;
+      syncUrl(keyword, page, currentType, currentOrder);
+      return;
+    }
+
+    totalPages = data.totalPages || 1;
+    metaRow.innerHTML = `找到 <b>${formatCount(data.total)}</b> 条结果`;
+    renderResults(data.list);
+    renderPagination();
+    syncUrl(keyword, page, currentType, currentOrder);
+  } catch (err) {
+    renderError('网络请求失败,请确认代理服务是否正在运行');
+    totalPages = 1;
+    syncUrl(keyword, page, currentType, currentOrder);
+  }
+}
+
+// 顶部搜索框就是本页的搜索入口,提交后原地搜索,不跳转(排序/筛选全部回到默认)
+function goSearch(keyword) {
+  currentOrder = '';
+  currentUserOrder = '';
+  currentUserSort = '0';
+  currentUserType = '0';
+  sortGroup.querySelectorAll('.sort-tab').forEach((el) => {
+    el.classList.toggle('active', !el.dataset.order);
+  });
+  userSortGroup.querySelectorAll('.sort-tab').forEach((el) => {
+    el.classList.toggle('active', !el.dataset.userOrder);
+  });
+  userTypeGroup.querySelectorAll('.sort-tab').forEach((el) => {
+    el.classList.toggle('active', el.dataset.userType === '0');
+  });
+  doSearch(keyword, 1);
+}
+
+// 从地址栏参数还原页面状态: 直接打开 /search?keyword=xxx 或前进/后退时都会用到
+function initFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const keyword = params.get('keyword') || '';
+  const page = parseInt(params.get('page'), 10) || 1;
+  const order = params.get('order') || '';
+  const type = params.get('type') === 'user' ? 'user' : 'video';
+  const userOrder = params.get('userOrder') || '';
+  const userSort = params.get('orderSort') === '1' ? '1' : '0';
+  const userType = params.get('userType') || '0';
+
+  input.value = keyword;
+  currentOrder = order;
+  currentType = type;
+  currentUserOrder = userOrder;
+  currentUserSort = userSort;
+  currentUserType = userType;
+  sortGroup.querySelectorAll('.sort-tab').forEach((el) => {
+    el.classList.toggle('active', (el.dataset.order || '') === order);
+  });
+  typeGroup.querySelectorAll('.sort-tab').forEach((el) => {
+    el.classList.toggle('active', el.dataset.type === type);
+  });
+  userSortGroup.querySelectorAll('.sort-tab').forEach((el) => {
+    el.classList.toggle(
+      'active',
+      (el.dataset.userOrder || '') === userOrder && (el.dataset.orderSort || '0') === userSort
+    );
+  });
+  userTypeGroup.querySelectorAll('.sort-tab').forEach((el) => {
+    el.classList.toggle('active', el.dataset.userType === userType);
+  });
+
+  if (keyword) {
+    doSearch(keyword, page);
+  } else {
+    renderInitialPlaceholder();
+  }
+}
+
+window.addEventListener('popstate', initFromUrl);
+
+let toastTimer = null;
+function showToast(text, durationMs) {
+  const toast = document.getElementById('bvidToast');
+  toast.innerHTML = text;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  // 默认 2 秒;登录过期这类重要提示会传更长的时长
+  toastTimer = setTimeout(() => toast.classList.remove('show'), durationMs || 2000);
+}
+
+function copyBvid(bvid) {
+  const onSuccess = () => showToast(`已复制 BV 号:<b> ${bvid}</b>`);
+  const onFail = () => showToast(`复制失败,BV号:<b> ${bvid}</b>`);
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(bvid).then(onSuccess).catch(() => fallbackCopy(bvid, onSuccess, onFail));
+  } else {
+    fallbackCopy(bvid, onSuccess, onFail);
+  }
+}
+
+function fallbackCopy(text, onSuccess, onFail) {
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    ok ? onSuccess() : onFail();
+  } catch (err) {
+    onFail();
+  }
+}
+
+results.addEventListener('click', (e) => {
+  // 用户结果里的关注按钮: 未登录时 common.js 会弹登录框,这里不再重复提示
+  const followBtn = e.target.closest('.sp-user-follow');
+  if (followBtn) {
+    e.stopPropagation();
+    toggleUserFollow(followBtn);
+    return;
+  }
+
+  // 卡片里的封面/标题/UP 名都是真 <a href>,交给浏览器(右键、中键、键盘)
+  if (e.target.closest('a[href]')) return;
+
+  // 用户结果整行可点: 行内没有链接,只能靠委托
+  const userRow = e.target.closest('.sp-user-row');
+  if (userRow && userRow.dataset.mid) {
+    window.location.href = `/account?mid=${userRow.dataset.mid}`;
+  }
+});
+
+async function toggleUserFollow(btn) {
+  if (btn.disabled) return;
+  if (!isUserLoggedIn) {
+    openLoginModal();
+    return;
+  }
+
+  const mid = btn.dataset.mid;
+  const follow = btn.dataset.following !== '1';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/up/follow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mid, follow }),
+    });
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(data.message || (follow ? '关注失败' : '取消关注失败'));
+    btn.classList.toggle('following', follow);
+    btn.dataset.following = follow ? '1' : '0';
+    btn.textContent = follow ? '已关注' : '+ 关注';
+  } catch (err) {
+    if (err.message !== '请先登录') showToast(escapeHtml(err.message));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const keyword = input.value.trim();
+  if (!keyword) return;
+  addHistory(keyword);
+  hideHistoryDropdown();
+  goSearch(keyword);
+});
+
+initFromUrl();
+
+// 登录后当前关键词的结果可能跟着登录态变化,重搜一次
+function afterLoginSuccess() {
+  if (currentKeyword) doSearch(currentKeyword, currentPage);
+}
+
+
+refreshLoginStatus();
+startLoginWatch();
+// 页面加载完后再确认一次上游登录态: 此时右上角已渲染,不会出现"登录/头像"闪烁,
+// 登录已失效时用户一进页面就能看到提示,不必等第一次巡检
+setTimeout(() => refreshLoginStatus({ verify: true }), 1500);
+</script>
+
+
+</body>
+</html>

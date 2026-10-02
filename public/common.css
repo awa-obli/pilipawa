@@ -1,0 +1,409 @@
+/* 全站公共样式:变量 / 基础 / 顶部导航 / 登录 / 搜索下拉。
+   这几块四个页面原本各留一份,抽出来只维护一份;新页面引入本文件即可,
+   不必再连同样式一起复制。
+
+   样式自包含 —— 组件正常渲染需要的属性都在这里显式声明,不依赖宿主页面。
+   .icon-btn 的背景/圆角与 .login-modal-close:hover 的背景就是为此而写:
+   player 页有 :where(button) 兜底样式,不显式盖掉会串进搜索按钮/设置入口/关闭按钮。 */
+
+:root {
+  --pink: #FB7299;
+  --pink-dark: #E4547E;
+  --blue: #00A1D6;
+  /* 播放页"已激活"按钮那层浅粉底 */
+  --pink-soft: rgba(251, 114, 153, .12);
+  /* 页面底色:浅色下就是白,靠顶栏阴影与边框划分层次 */
+  --bg: #FFFFFF;
+  /* 常驻中性填充:输入框、图标按钮悬停、头像/缩略图占位、选项卡底 */
+  --fill: #F1F2F3;
+  --card: #FFFFFF;
+  --text: #18191C;
+  --text-2: #61666D;
+  --text-3: #9499A0;
+  --border: #E3E5E7;
+  /* 品牌色底上的文字 */
+  --on-brand: #FFFFFF;
+  --icon: #4E535A;
+  /* 悬停底:比所在面再深一档;--hover-strong 更深,给实心小按钮用 */
+  --hover: #E8EAEB;
+  --hover-strong: #D2D6D9;
+  /* 搜索框聚焦底色:固定比输入框本身更深一档(深色下要压过导航色,所以不能沿用 --hover) */
+  --field-focus: #E8EAEB;
+  /* 缩略图/骨架屏这类"图还没到"的占位色 */
+  --thumb-bg: #E7E8EA;
+  --skeleton-1: #EEEEEE;
+  --skeleton-2: #F5F5F5;
+  --overlay: rgba(24, 25, 28, .5);
+  --toast-bg: rgba(24, 25, 28, .9);
+  --shadow: rgba(0, 0, 0, .1);
+  /* 搜索关键词命中、UP 主认证这类高亮 */
+  --mark-bg: #FFF3D6;
+  --mark-text: #D08512;
+}
+
+/* 深色主题:只覆盖配色变量,结构尺寸不动。
+   主题值由 theme.js 在 <head> 里提前写到 <html data-theme>,设置页负责切换 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --pink-soft: rgba(251, 114, 153, .16);
+  --bg: #17181C;
+  --fill: #17181C;
+  --card: #1F2126;
+  --text: #E7E9EC;
+  --text-2: #A5AAB2;
+  --text-3: #7A7F87;
+  --border: #2C2F35;
+  --on-brand: #FFFFFF;
+  --icon: #C9CED5;
+  --hover: #26282E;
+  --hover-strong: #33363D;
+  --field-focus: #0F1013;
+  --thumb-bg: #26282E;
+  --skeleton-1: #232529;
+  --skeleton-2: #2C2F35;
+  --overlay: rgba(0, 0, 0, .65);
+  --toast-bg: rgba(58, 61, 68, .95);
+  --shadow: rgba(0, 0, 0, .5);
+  --mark-bg: #4A3A16;
+  --mark-text: #E9B44C;
+}
+
+* { box-sizing: border-box; }
+
+/* player 页会把 body 当纵向 flex 容器用,在页面里覆盖 */
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    "Segoe UI", Roboto, sans-serif;
+}
+
+/* ------------------------------- 顶部导航 ------------------------------- */
+/* 默认用下边框体现与内容的边界;player 页改用阴影,在页面里覆盖 */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--card);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.nav-inner {
+  position: relative;
+  padding: 0 24px;
+  height: 56px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.logo {
+  display: flex;
+  align-items: center;
+  user-select: none;
+  text-decoration: none;
+  cursor: pointer;
+}
+.logo-img {
+  display: block;
+  height: 30px;
+  width: auto;
+}
+
+/* 边栏上的方形图标按钮(搜索框里的搜索按钮 / 设置入口)。
+   显式声明背景与圆角:player 页的 :where(button) 兜底会把粉色背景和边框串进来。 */
+.icon-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--icon);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  transition: background .15s ease;
+}
+.icon-btn:hover { background: var(--hover); }
+
+.search-wrap {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 48px);
+  max-width: 480px;
+}
+.search-box {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 4px 4px 4px 14px;
+  background: var(--fill);
+  border-radius: 10px;
+  transition: background .15s ease;
+}
+.search-box:focus-within { background: var(--field-focus); }
+.search-box input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  padding: 9px 0;
+  font-size: 14px;
+  color: var(--text);
+  background: none;
+}
+.search-box input::placeholder { color: var(--text-3); }
+.search-box button:hover { background: var(--hover-strong); }
+
+/* 搜索建议里命中关键词的高亮(由上游 suggest_high_light 标签转换而来) */
+.suggest-high-light { color: var(--pink); font-style: normal; font-weight: 600; }
+
+/* ------------------- 右侧操作区(登录入口 + 设置入口) ------------------- */
+.nav-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.login-slot {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+.login-btn {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  background: var(--pink);
+  color: var(--on-brand);
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s ease;
+}
+.login-btn:hover { background: var(--pink-dark); }
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border-radius: 20px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background .15s ease;
+}
+.user-chip:hover { background: var(--hover); }
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  display: block;
+}
+.user-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  max-width: 90px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------ 扫码登录弹窗 ------------------------------ */
+.login-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+.login-modal {
+  position: relative;
+  width: 280px;
+  background: var(--card);
+  border-radius: 14px;
+  padding: 28px 24px 24px;
+  text-align: center;
+}
+.login-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 4px;
+}
+/* 背景同样要显式清零,否则宿主的 button:hover 会把粉色背景串上来 */
+.login-modal-close:hover { background: none; color: var(--text); }
+.login-modal-title {
+  margin: 0 0 18px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.login-qrcode-box {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 0 auto;
+  /* 二维码要白底才扫得动,这里的底色不跟随主题 */
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.login-qrcode-box img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.login-qrcode-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, .94);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  text-align: center;
+}
+.login-qrcode-mask p {
+  margin: 0;
+  font-size: 13px;
+  /* 遮罩固定白底(见上),文字色也写死 */
+  color: #61666D;
+}
+.login-refresh-btn {
+  display: none;
+  padding: 6px 16px;
+  font-size: 12.5px;
+  font-weight: 500;
+  background: var(--pink);
+  color: var(--on-brand);
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+}
+.login-refresh-btn:hover { background: var(--pink-dark); }
+.login-modal-tip {
+  margin: 16px 0 0;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+/* ----------------------------- 搜索历史下拉 ----------------------------- */
+.history-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px var(--shadow);
+  padding: 6px;
+  display: none;
+  z-index: 20;
+  /* 展开建议/历史时的高度上限: 常规窗口全部展开不出现滚动条,窗口很矮时才滚动 */
+  max-height: min(70vh, 460px);
+  overflow-y: auto;
+  text-align: left;
+}
+.history-dropdown.show { display: block; }
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.history-clear {
+  border: none;
+  background: none;
+  color: var(--text-3);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.history-clear:hover { color: var(--pink); }
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text);
+}
+.history-item:hover { background: var(--hover); }
+.history-item:hover .history-text { color: var(--pink); }
+.history-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.history-text svg { flex-shrink: 0; color: var(--text-3); }
+.history-remove {
+  border: none;
+  background: none;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.history-remove:hover { color: var(--pink-dark); }
+.history-empty {
+  padding: 20px 10px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* --------------------------- 窄屏:导航收窄 --------------------------- */
+/* 用户名占位较大,960px 起只留头像 */
+@media (max-width: 960px) {
+  .user-name { display: none; }
+  .user-chip { padding: 4px; }
+}
+
+@media (max-width: 600px) {
+  .nav-inner { gap: 8px; padding: 10px 14px; }
+  .search-wrap {
+    position: relative;
+    left: auto;
+    transform: none;
+    width: auto;
+    max-width: none;
+    flex: 1;
+    min-width: 0;
+  }
+  .search-box { padding-left: 12px; }
+  .icon-btn { width: 32px; height: 32px; }
+  .login-btn { padding: 8px 12px; }
+}

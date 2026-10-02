@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>噼哩啪哇 (゜-゜)つロ 干杯~-pilipawa</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/common.css" />
+<style>
+  /* 内容区:两侧留白收窄,卡片随之变大(再宽就会多出一列,反而更小) */
+  .content {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 20px 18px 60px;
+  }
+
+  .meta-row {
+    color: var(--text-2);
+    font-size: 13px;
+    margin: 4px 0 16px;
+    min-height: 18px;
+  }
+  .meta-row b { color: var(--pink); font-weight: 600; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 20px 16px;
+  }
+
+  /* 卡片不再有底色、也不整块可点:只有封面和标题是播放页入口 */
+  .card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+  }
+  .card, .card:link, .card:visited, .card:hover, .card:active,
+  .card *, .card *:link, .card *:visited, .card *:hover, .card *:active {
+    text-decoration: none;
+  }
+  /* 标题只在光标落在标题文字本身时才变粉 */
+  /* 标题文字本身才是入口,样式见下面 .title-text */
+  /* 骨架屏不是真卡片,封面不给手型光标 */
+  .card.skeleton-card .thumb-wrap { cursor: default; }
+
+  .thumb-wrap {
+    display: block;
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    background: var(--thumb-bg);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .thumb-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .thumb-wrap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 40%;
+    background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
+    pointer-events: none;
+  }
+  .duration {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    background: rgba(0,0,0,.6);
+    color: #fff;
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    z-index: 1;
+  }
+  .thumb-stats {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    display: flex;
+    gap: 8px;
+    color: #fff;
+    font-size: 12px;
+    z-index: 1;
+  }
+  .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .stat-item svg { flex-shrink: 0; }
+
+  .card-body { padding: 8px 2px 6px; }
+  .title {
+    font-size: 14px;
+    line-height: 1.4;
+    height: 2.8em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    color: var(--text);
+    margin: 0 0 6px;
+  }
+  /* 标题文字外面包一层行内元素:块级 .title 占满整行(为了两行截断),
+     只让文字本身当点击/悬停区,右侧与第二行的留白不响应 */
+  .title-text {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color .12s ease;
+  }
+  .title-text:hover { color: var(--pink); }
+  .title em {
+    color: var(--pink);
+    font-style: normal;
+  }
+  .author {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .author svg { flex-shrink: 0; color: var(--text-3); }
+  .author span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* :hover 规则直接给这个 span 上色,所以它自己也必须有 transition,
+       否则只有 <a> 和角标在渐变、文字是硬跳色 */
+    transition: color .12s ease;
+  }
+  /* UP 这一行(角标 + 用户名 + 发布日期)整体是一个链接,指向 TA 的个人主页,
+     角标和文字都在 <a> 里,悬停任意一处三者一起变粉、点击行为一致 */
+  .author-link {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    color: var(--text-3);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color .12s ease;
+  }
+  .author-link svg { transition: color .12s ease; }
+  .author-link:hover,
+  .author-link:hover svg,
+  .author-link:hover .author-name {
+    color: var(--pink);
+  }
+
+  /* 空状态 / 提示 / 加载 */
+  .placeholder, .error-box {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-3);
+    font-size: 14px;
+  }
+  .error-box { color: var(--pink-dark); }
+  .placeholder svg { margin-bottom: 12px; opacity: .5; }
+
+  /* 骨架卡片与真实卡片同结构,高度一致,替换成真卡片时下方内容不跳动 */
+  .skeleton-card .thumb-wrap { background: linear-gradient(90deg, var(--skeleton-1), var(--skeleton-2), var(--skeleton-1)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+  .skeleton-line { height: 12px; background: var(--skeleton-1); border-radius: 4px; margin-top: 8px; }
+  /* 标题两条占位按 1.4 行高在 2.8em 里均分,和真实标题的两行等高 */
+  .skeleton-card .title { display: flex; flex-direction: column; justify-content: space-around; }
+  .skeleton-card .title .skeleton-line { height: 1em; margin: 0; }
+  /* UP 名占位靠一个透明字撑出行高(可见的只有色块),行高与真实卡片一致 */
+  .skeleton-card .author-name { width: 45%; height: auto; margin: 0; color: transparent; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  .bvid-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 32px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--toast-bg);
+    color: #fff;
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+    white-space: nowrap;
+  }
+  .bvid-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .bvid-toast b { color: var(--pink); }
+
+  @media (max-width: 600px) {
+    .content { padding: 16px 14px 40px; }
+  }
+
+  /* 首页推荐 */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0;
+  }
+  .refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 16px;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease;
+  }
+  .refresh-btn:hover {
+    color: var(--pink);
+    border-color: var(--pink);
+  }
+  .refresh-btn svg {
+    transition: transform .4s ease;
+  }
+  .refresh-btn.spinning svg {
+    transform: rotate(360deg);
+  }
+  #recommendSection {
+    margin-bottom: 24px;
+  }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="/" title="回到首页">
+      <img class="logo-img" src="/pilipawa-logo.png" alt="pilipawa" />
+    </a>
+    <div class="search-wrap">
+      <form class="search-box" id="searchForm">
+        <input id="keyword" type="text" placeholder="搜索你感兴趣的视频" autocomplete="off" />
+        <button class="icon-btn" type="submit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2"/>
+            <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </form>
+      <div class="history-dropdown" id="historyDropdown"></div>
+    </div>
+    <div class="nav-actions">
+      <div class="login-slot" id="loginSlot">
+        <button class="login-btn" type="button" onclick="openLoginModal()">登录</button>
+      </div>
+      <a class="icon-btn" href="/settings" title="设置" aria-label="设置">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 扫码登录弹窗(登录 B 站账号,不是本站账号体系) -->
+<div class="login-modal-mask" id="loginModalMask" style="display:none;">
+  <div class="login-modal">
+    <button class="login-modal-close" type="button" onclick="closeLoginModal()">&times;</button>
+    <p class="login-modal-title">扫码登录 B 站账号</p>
+    <div class="login-qrcode-box">
+      <img id="loginQrcodeImg" width="180" height="180" alt="登录二维码" />
+      <div class="login-qrcode-mask" id="loginQrcodeMask">
+        <p id="loginQrcodeMaskText"></p>
+        <button class="login-refresh-btn" id="loginRefreshBtn" type="button" onclick="startLoginFlow()">刷新二维码</button>
+      </div>
+    </div>
+    <p class="login-modal-tip">请使用哔哩哔哩客户端扫码登录</p>
+  </div>
+</div>
+
+<div class="content">
+  <div id="recommendSection">
+    <div class="section-header">
+      <!-- 标题(热门推荐/为你推荐)等 /api/recommend 回来才由脚本写入,先留空免得闪一帧默认文案 -->
+      <h2 class="section-title" id="recommendTitle"></h2>
+      <button class="refresh-btn" id="refreshRecommendBtn" type="button">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        换一批
+      </button>
+    </div>
+    <div id="recommendResults"></div>
+  </div>
+</div>
+
+<div class="bvid-toast" id="bvidToast"></div>
+
+<script src="/common.js"></script>
+<script>
+const form = document.getElementById('searchForm');
+const input = document.getElementById('keyword');
+const recommendResults = document.getElementById('recommendResults');
+const refreshRecommendBtn = document.getElementById('refreshRecommendBtn');
+
+function formatCount(n) {
+  if (n == null) return '-';
+  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(n);
+}
+
+function formatDate(pubdate) {
+  // 上游通常返回 unix 时间戳(秒),也兼容字符串形式的日期
+  if (pubdate == null || pubdate === '') return '';
+  let d;
+  if (typeof pubdate === 'number' || /^\d+$/.test(pubdate)) {
+    d = new Date(Number(pubdate) * 1000);
+  } else {
+    d = new Date(pubdate);
+  }
+  if (isNaN(d.getTime())) return '';
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${mm}-${dd}`;
+}
+
+function formatDuration(sec) {
+  // 上游可能给 "mm:ss" / "hh:mm:ss" 字符串,也可能给秒数
+  let totalSeconds;
+  if (typeof sec === 'string' && sec.includes(':')) {
+    const parts = sec.split(':').map((p) => parseInt(p, 10) || 0);
+    if (parts.length === 3) {
+      totalSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) {
+      totalSeconds = parts[0] * 60 + parts[1];
+    } else {
+      totalSeconds = parts[0] || 0;
+    }
+  } else {
+    totalSeconds = parseInt(sec, 10) || 0;
+  }
+
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function stripHtml(html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}
+
+function cardHTML(item) {
+  return `
+    <div class="card">
+      <a class="thumb-wrap" href="/player?bv=${item.bvid}">
+        <img src="${item.pic}" loading="lazy" alt="" referrerpolicy="no-referrer" onerror="this.style.opacity=0" />
+        <span class="thumb-stats">
+          <span class="stat-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M4 4.5C4 3.6 4.99 3.05 5.75 3.52L19.5 12L5.75 20.48C4.99 20.95 4 20.4 4 19.5V4.5Z" fill="currentColor" transform="translate(6.6,6) scale(0.5)"/>
+            </svg>
+            ${formatCount(item.play)}
+          </span>
+          <span class="stat-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="1.6"/>
+              <line x1="6" y1="9.5" x2="15" y2="9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <line x1="6" y1="14.5" x2="18" y2="14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            ${formatCount(item.danmaku)}
+          </span>
+        </span>
+        <span class="duration">${formatDuration(item.duration)}</span>
+      </a>
+      <div class="card-body">
+        <p class="title" title="${stripHtml(item.title).replace(/"/g, '&quot;')}"><a class="title-text" href="/player?bv=${item.bvid}">${item.title}</a></p>
+        <div class="author">
+          <a class="author-link" href="/account?mid=${item.authorMid || 0}" data-mid="${item.authorMid || 0}">
+            <svg width="16" height="13" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg">
+              <rect x="0.5" y="0.5" width="23" height="19" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+              <text x="12" y="14" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Roboto, sans-serif">UP</text>
+            </svg>
+            <span class="author-name">${item.author}${item.pubdate ? ` · ${formatDate(item.pubdate)}` : ''}</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderResults(list) {
+  results.innerHTML = `<div class="grid">${list.map(cardHTML).join('')}</div>`;
+}
+
+// 与 cardHTML 同样的标签层级:封面比例、标题两行、UP 名那一行占的高度都对齐
+function skeletonCardsHTML(count) {
+  return Array.from({ length: count }).map(() => `
+    <div class="card skeleton-card">
+      <div class="thumb-wrap"></div>
+      <div class="card-body">
+        <p class="title">
+          <span class="skeleton-line" style="width:90%"></span>
+          <span class="skeleton-line" style="width:58%"></span>
+        </p>
+        <div class="author">
+          <span class="author-name skeleton-line">占位</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// 末尾骨架的张数:第一批发回来之前按每批上限(同 server.js 的 RECOMMEND_PAGE_SIZE)算,
+// 之后跟着上一批的真实条数走。行数是按元素个数排的,所以只有骨架张数和真卡片张数
+// 一样,替换那一刻的总行数才不变,滚动条才不会跟着跳
+let skeletonReserve = 20;
+
+let recommendLoading = false;
+const seenBvids = new Set(); // 追加加载时用来过滤和已有卡片重复的 bvid
+let recommendGrid = null;    // 指向 #recommendResults 内的 .grid 容器,追加时直接往里插入
+
+function ensureRecommendGrid() {
+  if (!recommendGrid || !recommendResults.contains(recommendGrid)) {
+    recommendResults.innerHTML = '<div class="grid"></div>';
+    recommendGrid = recommendResults.querySelector('.grid');
+  }
+  return recommendGrid;
+}
+
+// 把网格末尾的骨架补到 skeletonReserve 张(上一批没被顶掉的原地留着),返回全部骨架节点
+function fillSkeletons(grid) {
+  const pending = Array.from(grid.querySelectorAll('.skeleton-card'));
+  if (pending.length >= skeletonReserve) return pending;
+  const template = document.createElement('template');
+  template.innerHTML = skeletonCardsHTML(skeletonReserve - pending.length);
+  const added = Array.from(template.content.children);
+  grid.append(template.content);
+  return pending.concat(added);
+}
+
+// append=false: "换一批"/首次加载,整块替换;append=true: 滚动到底部时在末尾追加下一批
+async function loadRecommend({ append = false } = {}) {
+  if (recommendLoading) return;
+  recommendLoading = true;
+
+  let skeletons = [];
+  if (append) {
+    skeletons = fillSkeletons(ensureRecommendGrid());
+  } else {
+    refreshRecommendBtn.classList.add('spinning');
+    seenBvids.clear();
+    recommendResults.innerHTML = `<div class="grid">${skeletonCardsHTML(skeletonReserve)}</div>`;
+    recommendGrid = recommendResults.querySelector('.grid');
+  }
+
+  // 新卡片一张换一张顶掉骨架时,多出来的骨架留到下一批,不能随手撤掉(撤掉就少一行)
+  let keptSkeletons = false;
+  try {
+    const res = await fetch('/api/recommend');
+    const data = await res.json();
+
+    if (!res.ok || !data.list || data.list.length === 0) {
+      if (!append) {
+        recommendResults.innerHTML = `<div class="error-box">${data.error || '推荐加载失败,请稍后再试'}</div>`;
+      }
+      return;
+    }
+
+    skeletonReserve = data.list.length;
+    document.getElementById('recommendTitle').textContent = data.personalized ? '为你推荐' : '热门推荐';
+
+    if (append) {
+      const fresh = data.list.filter((item) => item.bvid && !seenBvids.has(item.bvid));
+      fresh.forEach((item) => seenBvids.add(item.bvid));
+      if (fresh.length) {
+        // 真卡片插在骨架前,再顶掉同样多的骨架:末尾始终只留骨架
+        skeletons[0].insertAdjacentHTML('beforebegin', fresh.map(cardHTML).join(''));
+        skeletons.splice(0, fresh.length).forEach((card) => card.remove());
+        keptSkeletons = true;
+      }
+    } else {
+      recommendResults.innerHTML = `<div class="grid">${data.list.map(cardHTML).join('')}</div>`;
+      recommendGrid = recommendResults.querySelector('.grid');
+      data.list.forEach((item) => item.bvid && seenBvids.add(item.bvid));
+    }
+  } catch (err) {
+    if (!append) {
+      recommendResults.innerHTML = `<div class="error-box">网络请求失败,请确认代理服务是否正在运行</div>`;
+    }
+  } finally {
+    // 没顶上的骨架在这里收尾;撤骨架和插卡片在同一个任务里完成,不会先空出一帧
+    if (!keptSkeletons) skeletons.forEach((card) => card.remove());
+    recommendLoading = false;
+    if (!append) setTimeout(() => refreshRecommendBtn.classList.remove('spinning'), 400);
+  }
+}
+
+refreshRecommendBtn.addEventListener('click', () => loadRecommend({ append: false }));
+
+// 封面、标题、UP 名都是真 <a href>:右键/中键/键盘交给浏览器,没有点击委托要做的事
+
+/* ----------------------------- 滚动到底部自动加载下一批 ----------------------------- */
+
+const SCROLL_LOAD_THRESHOLD_PX = 300; // 距离底部小于这个值就算进入底部区域
+
+let nearBottom = false; // 上一次 scroll 时是否已在底部区域
+
+function maybeLoadMoreOnScroll() {
+  const gapToBottom =
+    document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+  const atBottom = gapToBottom < SCROLL_LOAD_THRESHOLD_PX;
+  // 撤掉骨架后高度可能回落,被钳制回来的滚动位置会再抛一次 scroll,
+  // 所以只在"刚进入底部区域"时追加:一次到底只取一批,不跟着钳制反复取
+  const enteredBottom = atBottom && !nearBottom;
+  nearBottom = atBottom;
+  if (enteredBottom && !recommendLoading) {
+    loadRecommend({ append: true });
+  }
+}
+
+window.addEventListener('scroll', maybeLoadMoreOnScroll, { passive: true });
+
+// 首页本身不展示搜索结果,搜索框提交后统一跳转到独立的搜索结果页
+function goSearch(keyword) {
+  window.location.href = `/search?keyword=${encodeURIComponent(keyword)}`;
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const keyword = input.value.trim();
+  if (!keyword) return;
+  addHistory(keyword);
+  hideHistoryDropdown();
+  goSearch(keyword);
+});
+
+loadRecommend();
+
+// 轻提示: 登录过期一类的提示停 4 秒
+function showToast(text, durationMs) {
+  const toast = document.getElementById('bvidToast');
+  if (!toast) return;
+  toast.textContent = text;
+  toast.classList.add('show');
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => toast.classList.remove('show'), durationMs || 4000);
+}
+
+// 登录后画质/推荐跟着登录态变化,刷新一次首页推荐
+function afterLoginSuccess() {
+  if (typeof loadRecommend === 'function') loadRecommend();
+}
+
+
+refreshLoginStatus();
+startLoginWatch();
+// 页面加载完后再确认一次上游登录态: 此时右上角已渲染,不会出现"登录/头像"闪烁,
+// 登录已失效时用户一进页面就能看到"登录"按钮,不必等第一次巡检
+setTimeout(() => refreshLoginStatus({ verify: true }), 1500);
+</script>
+
+
+</body>
+</html>
