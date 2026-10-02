@@ -183,7 +183,7 @@
   .skeleton-card .author-name { width: 45%; height: auto; margin: 0; color: transparent; }
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-  .bvid-toast {
+  .page-toast {
     position: fixed;
     left: 50%;
     bottom: 32px;
@@ -199,11 +199,10 @@
     transition: opacity .2s ease, transform .2s ease;
     white-space: nowrap;
   }
-  .bvid-toast.show {
+  .page-toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
   }
-  .bvid-toast b { color: var(--pink); }
 
   @media (max-width: 600px) {
     .content { padding: 16px 14px 40px; }
@@ -316,7 +315,7 @@
   </div>
 </div>
 
-<div class="bvid-toast" id="bvidToast"></div>
+<div class="page-toast" id="pageToast"></div>
 
 <script src="/common.js"></script>
 <script>
@@ -568,7 +567,7 @@ loadRecommend();
 
 // 轻提示: 登录过期一类的提示停 4 秒
 function showToast(text, durationMs) {
-  const toast = document.getElementById('bvidToast');
+  const toast = document.getElementById('pageToast');
   if (!toast) return;
   toast.textContent = text;
   toast.classList.add('show');

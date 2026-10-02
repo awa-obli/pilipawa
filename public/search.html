@@ -183,7 +183,7 @@
   .skeleton-card .author-name { width: 45%; height: auto; margin: 0; color: transparent; }
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-  .bvid-toast {
+  .page-toast {
     position: fixed;
     left: 50%;
     bottom: 32px;
@@ -199,11 +199,10 @@
     transition: opacity .2s ease, transform .2s ease;
     white-space: nowrap;
   }
-  .bvid-toast.show {
+  .page-toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
   }
-  .bvid-toast b { color: var(--pink); }
 
   @media (max-width: 600px) {
     .content { padding: 16px 14px 40px; }
@@ -519,7 +518,7 @@
   <div class="pagination" id="pagination"></div>
 </div>
 
-<div class="bvid-toast" id="bvidToast"></div>
+<div class="page-toast" id="pageToast"></div>
 
 <script src="/common.js"></script>
 <script>
@@ -982,40 +981,12 @@ window.addEventListener('popstate', initFromUrl);
 
 let toastTimer = null;
 function showToast(text, durationMs) {
-  const toast = document.getElementById('bvidToast');
+  const toast = document.getElementById('pageToast');
   toast.innerHTML = text;
   toast.classList.add('show');
   clearTimeout(toastTimer);
   // 默认 2 秒;登录过期这类重要提示会传更长的时长
   toastTimer = setTimeout(() => toast.classList.remove('show'), durationMs || 2000);
-}
-
-function copyBvid(bvid) {
-  const onSuccess = () => showToast(`已复制 BV 号:<b> ${bvid}</b>`);
-  const onFail = () => showToast(`复制失败,BV号:<b> ${bvid}</b>`);
-
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(bvid).then(onSuccess).catch(() => fallbackCopy(bvid, onSuccess, onFail));
-  } else {
-    fallbackCopy(bvid, onSuccess, onFail);
-  }
-}
-
-function fallbackCopy(text, onSuccess, onFail) {
-  try {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(textarea);
-    ok ? onSuccess() : onFail();
-  } catch (err) {
-    onFail();
-  }
 }
 
 results.addEventListener('click', (e) => {

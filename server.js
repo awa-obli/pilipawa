@@ -905,6 +905,35 @@ app.get("/api/account/history", async (req, res) => {
   }
 });
 
+// 校验这批收藏夹 id 是否都属于当前账号。收藏夹是账号级资源,调用方给的 id 不能直接信:
+// 上游请求失败时返回 null(响应已发出),id 越权时返回 false
+async function assertOwnFavorites(req, res, session, mediaIds) {
+  try {
+    await ensureProfileFields(req, session);
+    if (!session.mid) throw new Error("获取账号信息失败");
+
+    const cookie = await getUpstreamCookie(req);
+    const url = new URL("https://api.bilibili.com/x/v3/fav/folder/created/list-all");
+    url.searchParams.set("up_mid", String(session.mid));
+
+    const r = await fetchWithTimeout(url.toString(), { headers: { ...COMMON_HEADERS, Cookie: cookie } });
+    const json = await r.json();
+    if (replyIfUnauthorized(req, res, json)) return null;
+    if (json.code !== 0) throw new Error(`获取收藏夹列表失败: ${json.message || json.code}`);
+
+    const ownIds = new Set((json.data?.list || []).map((f) => String(f.id)));
+    return mediaIds.every((id) => ownIds.has(String(id)));
+  } catch (err) {
+    if (err.sessionInvalid) {
+      sendLoginExpired(res);
+    } else {
+      console.error(err);
+      res.status(502).json({ code: 1, message: "获取收藏夹列表失败,请稍后重试" });
+    }
+    return null;
+  }
+}
+
 // 收藏夹列表(只列自己创建的夹子)。带 ?rid={avid} 时上游会为每个夹子带上 fav_state
 // (1=该视频在此夹子里),播放页靠它画出"选择收藏夹"面板的勾选状态
 app.get("/api/account/favorites", async (req, res) => {
@@ -922,6 +951,8 @@ app.get("/api/account/favorites", async (req, res) => {
     const cookie = await getUpstreamCookie(req);
     const url = new URL("https://api.bilibili.com/x/v3/fav/folder/created/list-all");
     url.searchParams.set("up_mid", String(session.mid));
+    // type=2 只列收视频稿件的夹子(与收藏页一致),也让上游带上 attr
+    url.searchParams.set("type", "2");
     if (rid) url.searchParams.set("rid", String(rid));
 
     const biliRes = await fetchWithTimeout(url.toString(), { headers: { ...COMMON_HEADERS, Cookie: cookie } });
@@ -937,6 +968,8 @@ app.get("/api/account/favorites", async (req, res) => {
       id: f.id,
       title: f.title || "",
       mediaCount: f.media_count || 0,
+      // 二进制位属性:bit0=私密,bit1=是否其他收藏夹(0 即默认收藏夹,默认夹子不能删)
+      attr: f.attr || 0,
       // 传了 rid 时上游才会带 fav_state,没传就固定给 0(不传 rid 的调用方也不看这个字段)
       favState: f.fav_state || 0,
     }));
@@ -946,6 +979,148 @@ app.get("/api/account/favorites", async (req, res) => {
     if (err.sessionInvalid) return sendLoginExpired(res);
     console.error(err);
     const { status, message } = buildErrorResponse(err, "获取收藏夹列表失败,请稍后重试", 500);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* ----------------------------- 新建 / 编辑 / 删除收藏夹 -----------------------------
+ * 都是"写"操作,直接打到 B 站:
+ *   - 新建: x/v3/fav/folder/add,title + privacy + csrf
+ *   - 编辑: x/v3/fav/folder/edit,media_id + title + privacy + csrf
+ *   - 删除: x/v3/fav/folder/del,media_ids + csrf
+ * 默认收藏夹(attr bit1 为 0)上游不允许删,前端也不给删除入口(但仍可以改名字)。
+ * -------------------------------------------------------------------- */
+
+app.post("/api/account/favorites/create", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  const body = req.body || {};
+  const title = (body.title || "").toString().trim();
+  // privacy: 0=公开 1=私密,其余值一律当公开
+  const privacy = parseInt(body.privacy || "", 10) === 1 ? "1" : "0";
+
+  if (!title) return res.status(400).json({ code: 1, message: "请填写收藏夹名称" });
+  if (title.length > 40) return res.status(400).json({ code: 1, message: "收藏夹名称不能超过 40 个字" });
+
+  try {
+    const cookie = await getUpstreamCookie(req);
+    const params = new URLSearchParams({
+      title,
+      privacy,
+      csrf: session.biliJct || "",
+    });
+
+    const biliRes = await fetchWithTimeout("https://api.bilibili.com/x/v3/fav/folder/add", {
+      method: "POST",
+      headers: writeHeaders(cookie, "https://www.bilibili.com/account/fav"),
+      body: params.toString(),
+    });
+    const data = await biliRes.json();
+
+    if (replyIfUnauthorized(req, res, data)) return;
+
+    if (data.code !== 0) {
+      return res.json({ code: data.code, message: data.message || "新建收藏夹失败" });
+    }
+    // id 给前端用于本地插入新夹子,省一次列表请求
+    res.json({ code: 0, id: data.data?.id || null });
+  } catch (err) {
+    if (err.sessionInvalid) return sendLoginExpired(res);
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, "新建收藏夹失败,请稍后重试", 500);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+app.post("/api/account/favorites/edit", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  const body = req.body || {};
+  const mediaId = (body.mediaId || "").toString().trim();
+  const title = (body.title || "").toString().trim();
+  const privacy = parseInt(body.privacy || "", 10) === 1 ? "1" : "0";
+
+  if (!mediaId) return res.status(400).json({ code: 1, message: "缺少收藏夹 id" });
+  if (!title) return res.status(400).json({ code: 1, message: "请填写收藏夹名称" });
+  if (title.length > 40) return res.status(400).json({ code: 1, message: "收藏夹名称不能超过 40 个字" });
+
+  try {
+    // 同删除:改的是账号级资源,先确认这个夹子属于当前账号
+    const own = await assertOwnFavorites(req, res, session, [mediaId]);
+    if (own === null) return;
+    if (!own) {
+      return res.status(400).json({ code: 1, message: "收藏夹不存在或不属于当前账号" });
+    }
+
+    const cookie = await getUpstreamCookie(req);
+    const params = new URLSearchParams({
+      media_id: mediaId,
+      title,
+      privacy,
+      csrf: session.biliJct || "",
+    });
+
+    const biliRes = await fetchWithTimeout("https://api.bilibili.com/x/v3/fav/folder/edit", {
+      method: "POST",
+      headers: writeHeaders(cookie, "https://www.bilibili.com/account/fav"),
+      body: params.toString(),
+    });
+    const data = await biliRes.json();
+
+    if (replyIfUnauthorized(req, res, data)) return;
+
+    if (data.code !== 0) {
+      return res.json({ code: data.code, message: data.message || "保存收藏夹失败" });
+    }
+    res.json({ code: 0 });
+  } catch (err) {
+    if (err.sessionInvalid) return sendLoginExpired(res);
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, "保存收藏夹失败,请稍后重试", 500);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+app.post("/api/account/favorites/delete", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  const mediaId = ((req.body && req.body.mediaId) || "").toString().trim();
+  if (!mediaId) return res.status(400).json({ code: 1, message: "缺少收藏夹 id" });
+
+  try {
+    // 同移动/复制:删的是账号级资源,先确认这个夹子属于当前账号
+    const own = await assertOwnFavorites(req, res, session, [mediaId]);
+    if (own === null) return;
+    if (!own) {
+      return res.status(400).json({ code: 1, message: "收藏夹不存在或不属于当前账号" });
+    }
+
+    const cookie = await getUpstreamCookie(req);
+    const params = new URLSearchParams({
+      media_ids: mediaId,
+      csrf: session.biliJct || "",
+    });
+
+    const biliRes = await fetchWithTimeout("https://api.bilibili.com/x/v3/fav/folder/del", {
+      method: "POST",
+      headers: writeHeaders(cookie, "https://www.bilibili.com/account/fav"),
+      body: params.toString(),
+    });
+    const data = await biliRes.json();
+
+    if (replyIfUnauthorized(req, res, data)) return;
+
+    if (data.code !== 0) {
+      return res.json({ code: data.code, message: data.message || "删除收藏夹失败" });
+    }
+    res.json({ code: 0 });
+  } catch (err) {
+    if (err.sessionInvalid) return sendLoginExpired(res);
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, "删除收藏夹失败,请稍后重试", 500);
     res.status(status).json({ code: 1, message });
   }
 });
@@ -986,12 +1161,16 @@ app.get("/api/account/favorites/:mediaId", async (req, res) => {
       // aid 供取消收藏使用(上游 fav/resource/deal 收 avid)。type=2 的条目 m.id 就是 avid;
       // 番剧/课程等条目的 id 不是 avid,给 0 让前端不显示取消按钮
       aid: m.type === 2 ? m.id || 0 : 0,
+      // 内容类型,移动/复制要拼 resources={id}:{type}
+      type: m.type || 0,
       title: sanitizeTitle(m.title || ""),
       pic: m.cover?.startsWith("//") ? `https:${m.cover}` : m.cover || "",
       author: m.upper?.name || "",
       // 点作者名要跳 /account?mid=,只给名字跳不了
       authorMid: m.upper?.mid || 0,
       pubdate: m.pubtime || 0,
+      // 收藏时间:卡片上显示"收藏于 xxx",上游对番剧/课程等条目可能不给,前端据此退化成只显示 UP 名
+      favTime: m.fav_time || 0,
       duration: m.duration || 0,
       play: m.cnt_info?.play,
       danmaku: m.cnt_info?.danmaku,
@@ -1008,16 +1187,19 @@ app.get("/api/account/favorites/:mediaId", async (req, res) => {
       list,
     });
   } catch (err) {
+    if (err.sessionInvalid) return sendLoginExpired(res);
     console.error(err);
     const { status, message } = buildErrorResponse(err, "获取收藏夹内容失败,请稍后重试", 500);
     res.status(status).json({ code: 1, message });
   }
 });
 
-/* ----------------------------- 删除历史记录 / 取消收藏 -----------------------------
- * 两个都是"写"操作,直接打到 B 站,不做任何本地记录。
+/* ----------------------------- 删除历史记录 / 取消收藏 / 移动复制收藏 -----------------------------
+ * 都是"写"操作,直接打到 B 站,不做任何本地记录。
  *   - 删除单条历史: x/v2/history/delete,kid=archive_{aid} + csrf
  *   - 取消收藏:     x/v3/fav/resource/deal,rid={aid}&type=2&del_media_ids={收藏夹id}
+ *                   + csrf + WBI 签名
+ *   - 移动/复制:    x/v3/fav/resource/{move|copy},src_media_id/tar_media_id/mid/resources
  *                   + csrf + WBI 签名
  * csrf 用登录时存下来的 bili_jct。
  * -------------------------------------------------------------------- */
@@ -1092,8 +1274,73 @@ app.post("/api/account/favorites/remove", async (req, res) => {
     }
     res.json({ code: 0, data: data.data ?? null });
   } catch (err) {
+    if (err.sessionInvalid) return sendLoginExpired(res);
     console.error(err);
     const { status, message } = buildErrorResponse(err, "取消收藏失败,请稍后重试", 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+// 收藏夹之间移动/复制一条内容。两个上游接口参数完全相同,只有路径不同:
+// x/v3/fav/resource/{move|copy},收 src_media_id/tar_media_id/mid/resources({内容id}:{内容类型})
+// + csrf + WBI 签名。type=2 是视频,非 2 的条目(番剧/课程)上游不收,这里直接挡掉。
+app.post("/api/account/favorites/transfer", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  const body = req.body || {};
+  // 源条目 id:与其它写接口一样叫 aid(视频就是 avid),不是收藏夹 id
+  const aid = parseInt(body.aid || "", 10);
+  const type = parseInt(body.type || "", 10) || 2;
+  const srcMediaId = (body.mediaId || "").toString().trim();
+  const tarMediaId = (body.targetMediaId || "").toString().trim();
+  // 只认这两个值,别的一律当请求错误
+  const action = body.action === "copy" ? "copy" : body.action === "move" ? "move" : "";
+
+  if (!aid) return res.status(400).json({ code: 1, message: "缺少 aid 参数" });
+  if (!srcMediaId || !tarMediaId) return res.status(400).json({ code: 1, message: "缺少收藏夹 id" });
+  if (!action) return res.status(400).json({ code: 1, message: "缺少操作类型" });
+  if (srcMediaId === tarMediaId) {
+    return res.status(400).json({ code: 1, message: "不能移动到原收藏夹" });
+  }
+  if (type !== 2) {
+    return res.status(400).json({ code: 1, message: "该类型的内容暂不支持移动/复制" });
+  }
+
+  try {
+    const own = await assertOwnFavorites(req, res, session, [srcMediaId, tarMediaId]);
+    if (own === null) return;
+    if (!own) {
+      return res.status(400).json({ code: 1, message: "收藏夹不存在或不属于当前账号" });
+    }
+
+    const cookie = await getUpstreamCookie(req);
+    const signedParams = await signWbiParams({
+      src_media_id: srcMediaId,
+      tar_media_id: tarMediaId,
+      mid: String(session.mid),
+      resources: `${aid}:${type}`,
+      platform: "web",
+      csrf: session.biliJct || "",
+    });
+
+    const biliRes = await fetchWithTimeout(`https://api.bilibili.com/x/v3/fav/resource/${action}`, {
+      method: "POST",
+      headers: writeHeaders(cookie, "https://www.bilibili.com/account/fav"),
+      body: new URLSearchParams(signedParams).toString(),
+    });
+    const data = await biliRes.json();
+
+    if (replyIfUnauthorized(req, res, data)) return;
+
+    if (data.code !== 0) {
+      return res.json({ code: data.code, message: data.message || (action === "move" ? "移动失败" : "复制失败") });
+    }
+    res.json({ code: 0 });
+  } catch (err) {
+    if (err.sessionInvalid) return sendLoginExpired(res);
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, "操作失败,请稍后重试", 502);
     res.status(status).json({ code: 1, message });
   }
 });
@@ -3234,27 +3481,15 @@ app.post("/api/action/favorite", async (req, res) => {
   }
 
   try {
-    await ensureProfileFields(req, session);
-    if (!session.mid) throw new Error("获取账号信息失败");
-
-    const cookie = await getUpstreamCookie(req);
-
     // 前端给的是收藏夹 id,这里回查一次"自己创建的收藏夹"做校验,
     // 避免把不属于自己的 id 拼进 deal(收藏是账号级操作,不该由请求体说了算)
-    const ownListUrl = new URL("https://api.bilibili.com/x/v3/fav/folder/created/list-all");
-    ownListUrl.searchParams.set("up_mid", String(session.mid));
-    const ownRes = await fetchWithTimeout(ownListUrl.toString(), {
-      headers: { ...COMMON_HEADERS, Cookie: cookie },
-    });
-    const ownJson = await ownRes.json();
-    if (replyIfUnauthorized(req, res, ownJson)) return;
-    if (ownJson.code !== 0) throw new Error(`获取收藏夹列表失败: ${ownJson.message || ownJson.code}`);
-    const ownIds = new Set((ownJson.data?.list || []).map((f) => String(f.id)));
-    const unknown = `${addMediaIds},${delMediaIds}`.split(",").filter((id) => id && !ownIds.has(id));
-    if (unknown.length) {
+    const own = await assertOwnFavorites(req, res, session, [...addMediaIds.split(","), ...delMediaIds.split(",")]);
+    if (own === null) return;
+    if (!own) {
       return res.status(400).json({ code: 1, message: "收藏夹不存在或不属于当前账号" });
     }
 
+    const cookie = await getUpstreamCookie(req);
     const signedParams = await signWbiParams({
       rid: String(aid),
       type: "2",
