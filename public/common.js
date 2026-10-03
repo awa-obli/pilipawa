@@ -413,6 +413,11 @@ let loginWatchTimer = null;
 let isUserLoggedIn = false;
 
 function renderLoginSlot(state) {
+  // 登录态的唯一出处:各页的按钮守卫与顶栏浮层都读这个变量,
+  // 不能只靠实现了 onLoginStateChanged 的页面去更新它
+  isUserLoggedIn = !!(state && state.loggedIn);
+  // 顶栏浮层跟着登录态走:刚登录、换号、退出都要丢掉旧数据
+  if (window.NavPanels) window.NavPanels.syncLoginState();
   if (typeof onLoginStateChanged === 'function') onLoginStateChanged(state);
 
   const slot = document.getElementById('loginSlot');
@@ -572,3 +577,335 @@ async function pollLoginStatus() {
     console.warn('轮询登录状态失败:', err);
   }
 }
+
+/* ----------------------------- 顶栏入口的悬停浮层 -----------------------------
+ * 历史记录 / 收藏夹按钮悬停(或键盘聚焦)时展开面板,把接口第一页整页列出来,点条目进播放页。
+ * 数据只在首次展开时拉,成功后缓存在内存里;失败不缓存,收起后再悬停会重试。
+ * 未登录也能展开,面板里给一句"登录后可查看…"和登录入口,点了开扫码登录弹窗。
+ * -------------------------------------------------------------------- */
+
+(function () {
+  const OPEN_DELAY_MS = 120;
+  // 鼠标从按钮挪到面板要越过 8px 空隙,收起晚一点才不会误关
+  const CLOSE_DELAY_MS = 180;
+
+  const ENTRIES = [
+    {
+      type: 'history',
+      btnId: 'navHistoryBtn',
+      headText: '最近观看',
+      moreText: '查看全部历史',
+      moreHref: '/account?tab=history',
+      emptyText: '暂无观看历史',
+    },
+    {
+      type: 'favorites',
+      btnId: 'navFavBtn',
+      headText: '收藏夹',
+      moreText: '查看全部收藏夹',
+      moreHref: '/account?tab=favorites',
+      emptyText: '这个收藏夹还是空的',
+    },
+  ];
+
+  let ignoreFocusOpen = false;
+
+  function esc(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // 标题在服务端过了一遍 sanitizeTitle(只会残留成对的 <em class="keyword">),可以直插;
+  // 进 title 属性时先去标签再转义
+  function textOf(html) {
+    return String(html == null ? '' : html).replace(/<[^>]*>/g, '');
+  }
+
+  // 时长:接口给秒数,但历史上也有 "mm:ss" 字符串,统一换算成秒
+  function parseSeconds(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    const str = String(value == null ? '' : value).trim();
+    if (!str) return 0;
+    if (!str.includes(':')) return parseInt(str, 10) || 0;
+    const parts = str.split(':').map((p) => parseInt(p, 10) || 0);
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    return parts[0] || 0;
+  }
+
+  function fmtDuration(value) {
+    const total = parseSeconds(value);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function fmtCount(num) {
+    const n = Number(num) || 0;
+    if (n >= 100000000) return `${(n / 100000000).toFixed(1)}亿`;
+    if (n >= 10000) return `${(n / 10000).toFixed(1)}万`;
+    return String(n);
+  }
+
+  // 收藏时间:同年只给月-日,跨年再带年份(与个人主页的收藏夹卡片一致)
+  function fmtFavTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    if (isNaN(d.getTime())) return '';
+    const date = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return d.getFullYear() === new Date().getFullYear() ? date : `${d.getFullYear()}-${date}`;
+  }
+
+  function playerHref(bvid, page, seek) {
+    const params = new URLSearchParams();
+    params.set('bv', bvid);
+    if (page && page > 1) params.set('p', String(page));
+    if (seek && seek > 0) params.set('t', String(seek));
+    return `/player?${params.toString()}`;
+  }
+
+  function rowHTML(type, item) {
+    // 失效收藏(被删/下架)不给 href,点了不跳
+    const invalid = type === 'favorites' && item.valid === false;
+    const total = parseSeconds(item.duration);
+    let pct = null;
+    let seenText = '';
+    if (type === 'history') {
+      if (item.progress < 0) {
+        pct = 100;
+        seenText = '已看完';
+      } else if (item.progress > 0) {
+        pct = total > 0 ? Math.min(100, (item.progress / total) * 100) : null;
+        seenText = pct != null ? `看到 ${Math.round(pct)}%` : `看到 ${fmtDuration(item.progress)}`;
+      }
+    }
+    // 时长角标:看过一点的历史显示"上次到哪 / 总时长",其余只显示总时长
+    const durationText = type === 'history' && item.progress > 0
+      ? `${fmtDuration(item.progress)} / ${fmtDuration(total)}`
+      : fmtDuration(total);
+    const meta = (type === 'history'
+      ? [item.author, seenText]
+      : [item.author, item.favTime ? `收藏于 ${fmtFavTime(item.favTime)}` : '', invalid ? '视频已失效' : '']
+    ).filter(Boolean).join(' · ');
+    const href = playerHref(item.bvid, item.page, type === 'history' && item.progress > 0 ? item.progress : 0);
+
+    return `
+      <a class="nav-panel-row"${invalid ? '' : ` href="${esc(href)}"`} title="${esc(textOf(item.title))}">
+        <span class="nav-panel-thumb">
+          <img src="${esc(item.pic)}" loading="lazy" alt="" referrerpolicy="no-referrer" onerror="this.style.opacity=0" />
+          <span class="nav-panel-dur">${durationText}</span>
+          ${pct != null ? `<span class="nav-panel-track"><span style="width:${pct.toFixed(1)}%"></span></span>` : ''}
+        </span>
+        <span class="nav-panel-info">
+          <span class="nav-panel-title">${item.title || ''}</span>
+          ${meta ? `<span class="nav-panel-meta">${esc(meta)}</span>` : ''}
+        </span>
+      </a>
+    `;
+  }
+
+  function render(entry, loggedIn) {
+    entry.headTitle.textContent = entry.type === 'favorites' ? (entry.folderName || entry.headText) : entry.headText;
+    entry.headCount.textContent = entry.type === 'favorites' && entry.folderCount
+      ? `共 ${fmtCount(entry.folderCount)} 个`
+      : '';
+
+    // 未登录:列表位置换成一句提示 + 登录入口,"查看全部"也收起(那页同样看不了)
+    entry.prompt.style.display = loggedIn ? 'none' : 'flex';
+    entry.foot.style.visibility = loggedIn ? '' : 'hidden';
+    if (!loggedIn) {
+      entry.promptText.textContent = entry.type === 'history'
+        ? '登录后可查看历史记录'
+        : '登录后可查看收藏夹';
+      entry.listBox.innerHTML = '';
+      return;
+    }
+
+    if (entry.loading && !entry.list.length) {
+      entry.listBox.innerHTML = `<div class="nav-panel-empty">正在加载...</div>`;
+    } else if (entry.error) {
+      entry.listBox.innerHTML = `<div class="nav-panel-empty">${esc(entry.error)}</div>`;
+    } else if (!entry.list.length) {
+      entry.listBox.innerHTML = `<div class="nav-panel-empty">${esc(entry.emptyText)}</div>`;
+    } else {
+      entry.listBox.innerHTML = entry.list.map((item) => rowHTML(entry.type, item)).join('');
+    }
+  }
+
+  async function getJson(url) {
+    const res = await fetch(url);
+    const data = await res.json();
+    // 401 由本文件包装的 fetch 统一处理(切回未登录 + 清掉浮层缓存),这里只当加载失败
+    if (!data || data.code !== 0) throw new Error((data && data.message) || '加载失败');
+    return data;
+  }
+
+  async function load(entry) {
+    if (entry.type === 'history') {
+      const data = await getJson('/api/account/history?max=0&view_at=0');
+      return { list: data.list || [] };
+    }
+    const folders = await getJson('/api/account/favorites');
+    const all = folders.list || [];
+    // attr 的 bit1 为 0 才是默认收藏夹(上游把它排在最前)
+    const folder = all.find((f) => ((f.attr || 0) & 2) === 0) || all[0];
+    if (!folder) return { list: [] };
+    const data = await getJson(`/api/account/favorites/${encodeURIComponent(folder.id)}?pn=1`);
+    return { list: data.list || [], title: data.title || folder.title || '', count: data.mediaCount || 0 };
+  }
+
+  function ensureData(entry) {
+    // 未登录不请求(接口只会回 401),面板里由 render 换成"登录后可查看…"
+    if (!isUserLoggedIn || entry.loaded || entry.loading) return;
+    entry.loading = true;
+    entry.error = '';
+    render(entry, true); // 先把"正在加载..."画上
+    load(entry)
+      .then((data) => {
+        entry.list = data.list || [];
+        if (data.title != null) entry.folderName = data.title;
+        if (data.count != null) entry.folderCount = data.count;
+        entry.loaded = true;
+      })
+      .catch((err) => {
+        entry.error = err.message || '加载失败';
+      })
+      .then(() => {
+        entry.loading = false;
+        render(entry, true);
+      });
+  }
+
+  function openPanel(entry) {
+    if (entry.open) return;
+    // 两个浮层只开一个
+    ENTRIES.forEach((other) => closePanel(other));
+    entry.open = true;
+    entry.panel.classList.add('show');
+    entry.btn.setAttribute('aria-expanded', 'true');
+    // 未登录也能开:render 会把列表换成"登录后可查看…"
+    ensureData(entry);
+    render(entry, isUserLoggedIn);
+  }
+
+  function closePanel(entry) {
+    if (!entry || !entry.open) return;
+    clearTimeout(entry.openTimer);
+    entry.open = false;
+    entry.panel.classList.remove('show');
+    entry.btn.setAttribute('aria-expanded', 'false');
+  }
+
+  ENTRIES.forEach((entry) => {
+    entry.btn = document.getElementById(entry.btnId);
+    if (!entry.btn) return;
+
+    entry.loading = false;
+    entry.loaded = false;
+    entry.error = '';
+    entry.list = [];
+    entry.folderName = '';
+    entry.folderCount = 0;
+    entry.open = false;
+    entry.openTimer = null;
+    entry.closeTimer = null;
+
+    // 按钮外面包一层,让"按钮 + 浮层"成为同一个悬停区域
+    const wrap = document.createElement('div');
+    wrap.className = 'nav-pop';
+    entry.btn.parentNode.insertBefore(wrap, entry.btn);
+    wrap.appendChild(entry.btn);
+
+    const panel = document.createElement('div');
+    panel.className = 'nav-panel';
+    panel.innerHTML = `
+      <div class="nav-panel-head">
+        <span class="nav-panel-head-title"></span>
+        <span class="nav-panel-head-count"></span>
+      </div>
+      <div class="nav-panel-list"></div>
+      <div class="nav-panel-empty nav-panel-prompt" style="display:none;">
+        <span class="nav-panel-prompt-text"></span>
+        <button class="nav-panel-login" type="button">登录</button>
+      </div>
+      <a class="nav-panel-foot" href="${entry.moreHref}">${entry.moreText}</a>
+    `;
+    wrap.appendChild(panel);
+
+    entry.panel = panel;
+    entry.headTitle = panel.querySelector('.nav-panel-head-title');
+    entry.headCount = panel.querySelector('.nav-panel-head-count');
+    entry.listBox = panel.querySelector('.nav-panel-list');
+    entry.prompt = panel.querySelector('.nav-panel-prompt');
+    entry.promptText = panel.querySelector('.nav-panel-prompt-text');
+    entry.foot = panel.querySelector('.nav-panel-foot');
+    entry.btn.setAttribute('aria-haspopup', 'true');
+    entry.btn.setAttribute('aria-expanded', 'false');
+
+    // 未登录时面板里的"登录":开扫码登录弹窗,面板不收
+    entry.prompt.querySelector('.nav-panel-login').addEventListener('click', () => openLoginModal());
+
+    wrap.addEventListener('mouseenter', () => {
+      clearTimeout(entry.closeTimer);
+      clearTimeout(entry.openTimer);
+      // 只是划过不请求数据,所以展开也晚一点
+      entry.openTimer = setTimeout(() => openPanel(entry), OPEN_DELAY_MS);
+    });
+    wrap.addEventListener('mouseleave', () => {
+      clearTimeout(entry.openTimer);
+      clearTimeout(entry.closeTimer);
+      entry.closeTimer = setTimeout(() => closePanel(entry), CLOSE_DELAY_MS);
+    });
+    // 键盘:Tab 聚焦按钮即展开,焦点离开整个包裹元素才收起
+    wrap.addEventListener('focusin', () => {
+      if (ignoreFocusOpen) {
+        ignoreFocusOpen = false;
+        return;
+      }
+      clearTimeout(entry.closeTimer);
+      openPanel(entry);
+    });
+    wrap.addEventListener('focusout', (e) => {
+      if (!wrap.contains(e.relatedTarget)) closePanel(entry);
+    });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const opened = ENTRIES.find((entry) => entry.open);
+    if (!opened) return;
+    closePanel(opened);
+    // 焦点可能正落在面板里,收起后还给按钮;本来就焦点在按钮上时不会再触发 focusin
+    if (document.activeElement !== opened.btn) {
+      ignoreFocusOpen = true;
+      opened.btn.focus();
+    }
+  });
+
+  // 登录态快照:和它不一致说明刚登录/换号/退出,缓存与展开状态都不能留
+  let loggedInSnapshot = false;
+
+  window.NavPanels = {
+    // 由 renderLoginSlot 在每次刷新登录态后调用
+    syncLoginState() {
+      if (isUserLoggedIn === loggedInSnapshot) return;
+      loggedInSnapshot = isUserLoggedIn;
+      window.NavPanels.reset();
+    },
+    // 数据要么属于上一个账号,要么是未登录时那句"登录后可查看…",都丢掉,下次展开按新状态重画
+    reset() {
+      ENTRIES.forEach((entry) => {
+        closePanel(entry);
+        entry.loaded = false;
+        entry.loading = false;
+        entry.error = '';
+        entry.list = [];
+      });
+    },
+  };
+})();

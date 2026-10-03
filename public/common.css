@@ -163,7 +163,7 @@ body {
 /* 搜索建议里命中关键词的高亮(由上游 suggest_high_light 标签转换而来) */
 .suggest-high-light { color: var(--pink); font-style: normal; font-weight: 600; }
 
-/* ------------------- 右侧操作区(登录入口 + 设置入口) ------------------- */
+/* ------------------- 右侧操作区(登录入口 + 历史 / 收藏 + 设置入口) ------------------- */
 .nav-actions {
   margin-left: auto;
   display: flex;
@@ -385,6 +385,168 @@ body {
   font-size: 13px;
 }
 
+/* ------------------- 顶栏入口的悬停浮层(历史记录 / 收藏夹) ------------------- */
+/* 按钮与浮层包在同一个 .nav-pop 里:鼠标在两者之间移动仍算"没离开";
+   两者之间那 8px 空隙由脚本的延迟收起兜住。 */
+.nav-pop {
+  position: relative;
+  display: flex;
+}
+.nav-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 352px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px var(--shadow);
+  z-index: 20;
+  text-align: left;
+  /* 收起态:透明 + 上移一点。这里用 visibility 而不是 display —— display 没法过渡,
+     而 visibility 在过渡期间会保持 visible,所以展开/收起两头都能看到动画 */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition: opacity .16s ease, transform .16s ease, visibility .16s;
+}
+.nav-panel.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.nav-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.nav-panel-head-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-panel-head-count { flex-shrink: 0; }
+/* 只让列表滚动,表头与底部"查看全部"始终可见 */
+.nav-panel-list {
+  max-height: min(60vh, 400px);
+  overflow-y: auto;
+}
+.nav-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+/* 失效收藏不给 href,也就不该有可点的悬停反馈 */
+.nav-panel-row[href]:hover,
+.nav-panel-row[href]:focus-visible { background: var(--hover); }
+/* 16:9 的封面。比原来大一点,宽度要放得下"看到位置 / 总时长"那种最长的时长角标 */
+.nav-panel-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 120px;
+  height: 68px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--thumb-bg);
+}
+.nav-panel-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* 时长角标与观看进度都叠在封面上,和卡片上的角标一样用固定配色(底色是图片,不跟主题走)。
+   角标可能很长("看到位置 / 总时长"),不许换行(换行会占掉小半个封面) */
+.nav-panel-dur {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, .66);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.nav-panel-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(0, 0, 0, .5);
+}
+.nav-panel-track span {
+  display: block;
+  height: 100%;
+  background: var(--pink);
+}
+.nav-panel-info {
+  flex: 1;
+  min-width: 0;
+}
+.nav-panel-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.nav-panel-meta {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.nav-panel-foot {
+  display: block;
+  margin-top: 4px;
+  padding: 8px 10px 6px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-2);
+  text-decoration: none;
+}
+.nav-panel-foot:hover { color: var(--pink); }
+.nav-panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 10px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-3);
+}
+/* 未登录时浮层里的登录入口:点了打开扫码登录弹窗 */
+.nav-panel-login {
+  padding: 6px 18px;
+  border: none;
+  border-radius: 16px;
+  background: var(--pink);
+  color: var(--on-brand);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.nav-panel-login:hover { background: var(--pink-dark); }
+
 /* --------------------------- 收藏夹选择弹窗 --------------------------- */
 /* 播放页"选择收藏夹"与个人主页"复制/移动到收藏夹"共用:居中弹窗,夹子多时只有列表
    内部滚动,弹窗高度不变;底部按钮由页面决定(播放页的取消+确定,个人主页只剩取消) */
@@ -526,4 +688,8 @@ body {
   .search-box { padding-left: 12px; }
   .icon-btn { width: 32px; height: 32px; }
   .login-btn { padding: 8px 12px; }
+  /* 窄屏下按钮离视口右边更近,浮层收窄一档免得顶出去;
+     封面同时缩一档(仍要放得下最长的时长角标) */
+  .nav-panel { width: min(320px, calc(100vw - 32px)); }
+  .nav-panel-thumb { width: 112px; height: 63px; }
 }

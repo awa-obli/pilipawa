@@ -614,12 +614,13 @@
     opacity: 1;
     pointer-events: auto;
   }
-  /* 按钮旁边的菜单(遮住同行的数字没关系,菜单一关就恢复) */
+  /* 按钮旁边的菜单(遮住同行的数字没关系,菜单一关就恢复)。
+     展开/收起用 visibility + opacity + transform 过渡(display 没法过渡),
+     收起时往按钮那侧挪 6px,展开就是从这里滑回原位 */
   .folder-menu {
     position: absolute;
     top: 50%;
     left: 100%;
-    transform: translateY(-50%);
     margin-left: 4px;
     z-index: 30;
     min-width: 96px;
@@ -628,8 +629,16 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 4px 14px var(--shadow);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-50%) translateX(-6px);
+    transition: opacity .16s ease, transform .16s ease, visibility .16s;
   }
-  .folder-menu[hidden] { display: none; }
+  .folder-menu.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(-50%) translateX(0);
+  }
   .folder-menu-item {
     display: flex;
     align-items: center;
@@ -648,7 +657,8 @@
   .card-menu-item svg,
   .folder-menu-item svg { width: 16px; height: 16px; }
 
-/* 目标夹子里已经有这条内容:列出来但不让选(上游不会真的重复加入) */
+/* 搬运弹窗里"目标夹子已经有这条内容"的行:列出来但不让选
+   (上游不会真的重复加入)。底色/文字色沿用 common.css 的 .fav-folder-item */
   .fav-folder-item.is-disabled {
     color: var(--text-3);
     cursor: default;
@@ -675,8 +685,6 @@
   }
   .fav-create-btn:hover { color: var(--pink); border-color: var(--pink); }
 
-/* 目标夹子里已经有这条内容:列出来但不让选(上游不会真的重复加入) */
-
 /* 收藏夹卡片标题右侧的"..."按钮(展开操作菜单),与垃圾桶图标同类的方形按钮 */
   .card-more {
     flex-shrink: 0;
@@ -700,7 +708,8 @@
   .card-more:hover,
   .card-more.active { color: var(--pink); background: var(--hover); }
 
-/* "..."展开的操作菜单:绝对定位在卡片内,不参与网格布局,所以不会把卡片撑高 */
+/* "..."展开的操作菜单:绝对定位在卡片内,不参与网格布局,所以不会把卡片撑高。
+   展开/收起同 .folder-menu,收起时往上挪一点,从按钮下方滑出来 */
   .card-menu {
     position: absolute;
     top: 26px;
@@ -712,8 +721,16 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 4px 14px var(--shadow);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-6px);
+    transition: opacity .16s ease, transform .16s ease, visibility .16s;
   }
-  .card-menu[hidden] { display: none; }
+  .card-menu.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
   .card-menu-item {
     display: flex;
     align-items: center;
@@ -894,6 +911,17 @@
       <div class="login-slot" id="loginSlot">
         <button class="login-btn" type="button" onclick="openLoginModal()">登录</button>
       </div>
+      <a class="icon-btn" id="navHistoryBtn" href="/account?tab=history" title="历史记录" aria-label="历史记录">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 6.1V12l3.7 2.6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+      <a class="icon-btn" id="navFavBtn" href="/account?tab=favorites" title="收藏夹" aria-label="收藏夹">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10.99 2.32 C11.31 1.44 12.69 1.44 13.01 2.32 L15.04 8.13 C15.17 8.49 15.5 8.72 15.88 8.72 L22.01 8.72 C22.97 8.72 23.36 9.95 22.59 10.52 L17.58 14.16 C17.28 14.38 17.14 14.77 17.26 15.13 L19.17 21 C19.48 21.94 18.41 22.69 17.61 22.11 L12.59 18.47 C12.25 18.22 11.75 18.22 11.41 18.47 L6.39 22.11 C5.59 22.69 4.52 21.94 4.83 21 L6.74 15.13 C6.86 14.77 6.72 14.38 6.42 14.16 L1.41 10.52 C0.64 9.95 1.03 8.72 1.99 8.72 L8.12 8.72 C8.5 8.72 8.83 8.49 8.96 8.13 L10.99 2.32 Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
       <a class="icon-btn" href="/settings" title="设置" aria-label="设置">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
@@ -946,14 +974,15 @@
   </div>
 </div>
 
-<!-- 新建收藏夹弹窗 -->
-<div class="fav-folder-mask" id="favCreateMask">
+<!-- 收藏夹信息弹窗:新建("新建收藏夹"按钮)和编辑(夹子行 "..." 菜单里的"编辑信息")
+     共用这一个,字段只有名称 + 可见性,差别只在标题和按钮文案,由 JS 按 mode 切换 -->
+<div class="fav-folder-mask" id="folderFormMask">
   <div class="fav-folder-modal">
-    <p class="fav-folder-title">新建收藏夹</p>
+    <p class="fav-folder-title" id="folderFormTitle">新建收藏夹</p>
     <div class="fav-create-body">
-      <input class="fav-create-input" id="favCreateInput" type="text" maxlength="40" placeholder="收藏夹名称" autocomplete="off" />
+      <input class="fav-create-input" id="folderFormInput" type="text" maxlength="40" placeholder="收藏夹名称" autocomplete="off" />
       <label class="fav-create-check">
-        <input type="checkbox" class="fav-create-native" id="favCreatePrivate" />
+        <input type="checkbox" class="fav-create-native" id="folderFormPrivate" />
         <span class="fav-create-box">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -963,31 +992,8 @@
       </label>
     </div>
     <div class="fav-folder-foot">
-      <button class="fav-folder-btn cancel" id="favCreateCancel" type="button">取消</button>
-      <button class="fav-folder-btn confirm" id="favCreateConfirm" type="button">创建</button>
-    </div>
-  </div>
-</div>
-
-<!-- 编辑收藏夹弹窗(夹子行 "..." 菜单里的"编辑信息"),字段与新建一致 -->
-<div class="fav-folder-mask" id="favEditMask">
-  <div class="fav-folder-modal">
-    <p class="fav-folder-title">编辑收藏夹</p>
-    <div class="fav-create-body">
-      <input class="fav-create-input" id="favEditInput" type="text" maxlength="40" placeholder="收藏夹名称" autocomplete="off" />
-      <label class="fav-create-check">
-        <input type="checkbox" class="fav-create-native" id="favEditPrivate" />
-        <span class="fav-create-box">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </span>
-        <span class="fav-create-label">仅自己可见</span>
-      </label>
-    </div>
-    <div class="fav-folder-foot">
-      <button class="fav-folder-btn cancel" id="favEditCancel" type="button">取消</button>
-      <button class="fav-folder-btn confirm" id="favEditConfirm" type="button">保存</button>
+      <button class="fav-folder-btn cancel" id="folderFormCancel" type="button">取消</button>
+      <button class="fav-folder-btn confirm" id="folderFormConfirm" type="button">创建</button>
     </div>
   </div>
 </div>
@@ -1174,6 +1180,12 @@ function getUrlMid() {
   return mid && /^\d+$/.test(mid) ? mid : null;
 }
 
+// URL 上的 ?tab= 指定进页面时打开哪个选项卡,顶栏的"历史记录/收藏夹"入口就靠它直达
+function getUrlTab() {
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return tab === 'history' || tab === 'favorites' ? tab : null;
+}
+
 /* ----------------------------- 顶部导航搜索框 -----------------------------
  * 本页不展示搜索结果,提交后跳转到 /search。搜索历史的存取与下拉交互在 common.js 里。
  * -------------------------------------------------------------------- */
@@ -1216,11 +1228,16 @@ async function loadProfile() {
     }
     renderProfile(data);
     document.getElementById('mainArea').style.display = 'block';
-    // 自己的主页默认展示第一个选项卡"我的投稿";
-    // 历史记录/收藏夹改成点开对应选项卡时才加载,避免一进页面就打三个上游接口
     setupSpaceVideosTab('my', data.mid);
-    spaceVideoLoaded = true;
-    loadSpaceVideos(true);
+    // 自己的主页默认展示"我的投稿",三个面板都是点开对应选项卡时才加载;
+    // 带 ?tab= 进来时直接切过去,不为看一眼历史/收藏先拉一次投稿
+    const urlTab = getUrlTab();
+    if (urlTab) {
+      switchTab(urlTab);
+    } else {
+      spaceVideoLoaded = true;
+      loadSpaceVideos(true);
+    }
   } catch (err) {
     renderProfileError(null, loadProfile);
   }
@@ -1790,9 +1807,19 @@ let activeTab = 'spaceVideos';
 let favLoaded = false;
 let historyLoaded = false;
 
+// 当前选项卡回写到地址栏的 ?tab=:默认的"我的投稿"不带参数。
+// 用 replaceState,切选项卡不往浏览历史里塞记录,返回键行为不变
+function syncUrlTab(tab) {
+  const url = new URL(window.location.href);
+  if (tab === 'spaceVideos') url.searchParams.delete('tab');
+  else url.searchParams.set('tab', tab);
+  history.replaceState(null, '', url);
+}
+
 function switchTab(tab) {
   if (tab === activeTab) return;
   activeTab = tab;
+  syncUrlTab(tab);
   document.getElementById('tabSpaceVideos').classList.toggle('active', tab === 'spaceVideos');
   document.getElementById('tabHistory').classList.toggle('active', tab === 'history');
   document.getElementById('tabFavorites').classList.toggle('active', tab === 'favorites');
@@ -1901,30 +1928,17 @@ function thumbStatsHTML(play, danmaku) {
   return playStat + danmakuStat;
 }
 
-// 卡片上只有"删历史 / 收藏夹卡片上的 ... 菜单"需要 JS:封面、标题、UP 名都是真 <a href>,
+// 卡片上只有"删历史 / 收藏夹卡片上的 ... 菜单项"需要 JS:封面、标题、UP 名都是真 <a href>,
 // 跳转交给浏览器,点卡片空白处不响应
 function handleCardAreaClick(e) {
-  const moreBtn = e.target.closest('.card-more');
-  if (moreBtn) {
-    e.stopPropagation();
-    e.preventDefault();
-    e.stopImmediatePropagation(); // 菜单在 #favDetailList 里,别再让下面的委托去认菜单项
-    toggleCardMenu(moreBtn);
-    return;
-  }
-
   const menuItem = e.target.closest('.card-menu-item');
   if (menuItem) {
-    e.stopPropagation();
-    e.preventDefault();
-    e.stopImmediatePropagation();
     runCardMenuAction(menuItem);
     return;
   }
 
   const actionBtn = e.target.closest('.card-del');
   if (!actionBtn) return;
-  e.stopPropagation();
   e.preventDefault();
   handleCardAction(actionBtn);
 }
@@ -1935,10 +1949,62 @@ function handleCardAreaClick(e) {
 /* ----------------------------- 卡片上的 "..." 操作菜单 -----------------------------
  * 收藏夹卡片的操作(取消收藏 / 复制到 / 移动到)收在一个 "..." 菜单里,
  * 菜单挂在卡片上(绝对定位),不参与网格布局,展开时不会把卡片撑高。
- * 同时只允许开一个:再次点同一个按钮收起,点菜单项或页面别处都收起。
+ * 卡片和侧栏那两套菜单的逻辑完全一样,只差按钮上的 aria-expanded,
+ * 所以共用这个控制器:悬停 "..." 按钮展开,离开按钮或菜单收起,同时只开一个。
+ * close() 是幂等的,点菜单项时也调它。
  * -------------------------------------------------------------------- */
 
-// 两个 "..." 菜单里的图标统一 16px(卡片那个菜单三项 + 侧栏夹子那两项大小一致)
+function createMenuController(triggerSelector, menuSelector, syncAria) {
+  let open = null; // 当前展开的那一个: { button, menu }
+
+  function close() {
+    if (!open) return;
+    // 列表重绘过时这两个元素可能已经不在文档里了,改它们没有意义
+    if (open.menu.isConnected) open.menu.classList.remove('show');
+    if (open.button.isConnected) {
+      open.button.classList.remove('active');
+      if (syncAria) open.button.setAttribute('aria-expanded', 'false');
+    }
+    open = null;
+  }
+
+  function show(button, menu) {
+    if (!button || !menu || (open && open.button === button)) return;
+    close();
+    menu.classList.add('show');
+    button.classList.add('active');
+    if (syncAria) button.setAttribute('aria-expanded', 'true');
+    open = { button, menu };
+  }
+
+  // 按钮与菜单相差一层 DOM(在父元素里就能找到对方),指针落在任一个上都算展开区域
+  function handleOver(e) {
+    const button = e.target.closest(triggerSelector);
+    const menu = button ? button.parentElement.querySelector(menuSelector) : e.target.closest(menuSelector);
+    if (!menu) return;
+    show(button || menu.parentElement.querySelector(triggerSelector), menu);
+  }
+
+  // 指针在按钮与菜单之间来回不算离开,挪到别处就收起
+  function handleOut(e) {
+    const to = e.relatedTarget;
+    if (to && to.closest && (to.closest(triggerSelector) || to.closest(menuSelector))) return;
+    close();
+  }
+
+  // 列表会整块重绘,逐个元素挂监听会被重绘丢掉,所以委托在容器上
+  function bind(container) {
+    container.addEventListener('mouseover', handleOver);
+    container.addEventListener('mouseout', handleOut);
+  }
+
+  return { close, bind };
+}
+
+const cardMenu = createMenuController('.card-more', '.card-menu', false);
+cardMenu.bind(document.getElementById('favDetailList'));
+
+// 卡片菜单三项的图标(尺寸由 CSS 统一钉成 16px,见 .card-menu-item svg)
 const CARD_ACTION_ICON = {
   trash: TRASH_ICON_SVG,
   copy: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1987,33 +2053,11 @@ const CARD_MENU_ICON = `<svg width="16" height="4" viewBox="0 0 24 6" fill="curr
 
 // 收藏夹卡片的操作菜单:取消收藏、复制到别的夹子、移动到别的夹子
 function favCardMenuHTML() {
-  return `<div class="card-menu" hidden>
+  return `<div class="card-menu">
       ${cardMenuItemHTML('unfav', '取消收藏', { icon: CARD_ACTION_ICON.trash })}
       ${cardMenuItemHTML('copy', '复制到', { icon: CARD_ACTION_ICON.copy })}
       ${cardMenuItemHTML('move', '移动到', { icon: CARD_ACTION_ICON.move })}
     </div>`;
-}
-
-let openCardMenu = null;
-
-function closeCardMenu() {
-  if (!openCardMenu) return;
-  // 列表重绘过时这两个元素可能已经不在文档里了,改它们没有意义
-  if (openCardMenu.menu.isConnected) openCardMenu.menu.hidden = true;
-  if (openCardMenu.button.isConnected) openCardMenu.button.classList.remove('active');
-  openCardMenu = null;
-}
-
-// 同一个按钮再点一次就收起;换一个按钮则先关掉原来的
-function toggleCardMenu(button) {
-  const menu = button.parentElement.querySelector('.card-menu');
-  if (!menu) return;
-  const wasOpen = openCardMenu && openCardMenu.button === button;
-  closeCardMenu();
-  if (wasOpen) return;
-  menu.hidden = false;
-  button.classList.add('active');
-  openCardMenu = { button, menu };
 }
 
 // 点菜单项时把这一项相关的 id 一起带过去:移动/复制要内容 id + 源夹子,取消收藏要 aid + 标题
@@ -2021,7 +2065,7 @@ function runCardMenuAction(menuItem) {
   const { action } = menuItem.dataset;
   // 菜单项自己不带这些 id:它们来自同一张卡片上的 "..." 按钮,点哪一项都先取一遍
   const { menuId, menuMediaId, menuType, menuTitle } = menuItem.closest('.card').querySelector('.card-more').dataset;
-  closeCardMenu();
+  cardMenu.close();
   if (action === 'copy' || action === 'move') {
     openFavPick({ menuId, menuMediaId, menuType }, action);
     return;
@@ -2031,14 +2075,6 @@ function runCardMenuAction(menuItem) {
     handleCardAction({ dataset: { unfav: menuId, mediaId: menuMediaId, title: menuTitle }, disabled: false }, menuItem.closest('.card'));
   }
 }
-
-// 点别处 / Esc 收起菜单
-document.addEventListener('click', () => closeCardMenu());
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeCardMenu();
-});
-// 列表重绘后原来的菜单已经不在 DOM 里,指针不能继续攥着它
-window.addEventListener('scroll', closeCardMenu, true);
 
 /* ----------------------------- 删历史 / 取消收藏 -----------------------------
  * 两个操作都是真删: 上游删掉之后才改本地列表,所以刷新页面不会"复活"。
@@ -2298,7 +2334,7 @@ function renderFavFolders() {
       <span class="folder-tail">
         <span class="folder-count">${f.mediaCount}</span>
         <button type="button" class="folder-more" aria-label="更多操作" aria-haspopup="true" aria-expanded="false">⋯</button>
-        <div class="folder-menu" hidden>
+        <div class="folder-menu">
           <div class="folder-menu-item" data-folder-action="edit">${FOLDER_MENU_ICON.edit}编辑信息</div>
           ${(f.attr & 2) ? `<div class="folder-menu-item" data-folder-action="delete">${FOLDER_MENU_ICON.delete}删除</div>` : ''}
         </div>
@@ -2307,172 +2343,119 @@ function renderFavFolders() {
   `).join('');
 }
 
-/* ----------------------------- 新建 / 删除收藏夹 -----------------------------
- * 新建走 x/v3/fav/folder/add(名称 + 可选"仅自己可见"),删除走 x/v3/fav/folder/del,
- * 对应 /api/account/favorites/create | delete。删除后重新拉一次列表:夹子带的内容多,
- * 本地减不如以服务端为准。默认收藏夹不给删除入口。
- * -------------------------------------------------------------------- */
+/* ----------------------------- 收藏夹信息弹窗(新建 / 编辑) -----------------------------
+ * 新建走 x/v3/fav/folder/add,编辑走 x/v3/fav/folder/edit,对应
+ * /api/account/favorites/create | edit。两个表单字段完全一样(名称 + 可见性),
+ * 所以共用一个弹窗,只有标题、按钮文案和提交的目标接口按 mode 分。
+ * 成功后:新建重拉一次列表(新夹子带着 id/attr,本地拼不出来),
+ * 编辑只改本地那一个夹子(只动了名字/可见性,内容数没变)。
+ * ---------------------------------------------------------------------------------- */
 
-const favCreateMask = document.getElementById('favCreateMask');
-const favCreateInput = document.getElementById('favCreateInput');
-const favCreatePrivate = document.getElementById('favCreatePrivate');
-const favCreateConfirm = document.getElementById('favCreateConfirm');
-let favCreateSubmitting = false;
+const folderFormMask = document.getElementById('folderFormMask');
+const folderFormTitle = document.getElementById('folderFormTitle');
+const folderFormInput = document.getElementById('folderFormInput');
+const folderFormPrivate = document.getElementById('folderFormPrivate');
+const folderFormConfirm = document.getElementById('folderFormConfirm');
 
-document.getElementById('favCreateBtn').addEventListener('click', openFavCreate);
-document.getElementById('favCreateCancel').addEventListener('click', () => closeFavCreate());
+// mode: 'create' | 'edit';folder 只在 edit 时用
+let folderFormMode = 'create';
+let folderFormFolder = null;
+let folderFormSubmitting = false;
+
+document.getElementById('favCreateBtn').addEventListener('click', () => openFolderForm('create'));
+document.getElementById('folderFormCancel').addEventListener('click', closeFolderForm);
 // 点遮罩空白处关闭(弹窗内部的点击不关,同其它弹窗)
-favCreateMask.addEventListener('click', (e) => {
-  if (e.target === favCreateMask) closeFavCreate();
+folderFormMask.addEventListener('click', (e) => {
+  if (e.target === folderFormMask) closeFolderForm();
 });
-favCreateConfirm.addEventListener('click', submitFavCreate);
-favCreateInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') submitFavCreate();
+folderFormConfirm.addEventListener('click', submitFolderForm);
+folderFormInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitFolderForm();
 });
 
-function openFavCreate() {
-  favCreateInput.value = '';
-  favCreatePrivate.checked = false;
-  favCreateSubmitting = false;
-  favCreateMask.classList.add('show');
-  favCreateConfirm.disabled = false;
-  favCreateConfirm.textContent = '创建';
-  favCreateInput.focus();
+// folder 只在 mode='edit' 时传
+function openFolderForm(mode, folder) {
+  folderFormMode = mode;
+  folderFormFolder = folder || null;
+  folderFormTitle.textContent = mode === 'create' ? '新建收藏夹' : '编辑收藏夹';
+  folderFormConfirm.textContent = mode === 'create' ? '创建' : '保存';
+  folderFormInput.value = mode === 'edit' && folder ? (folder.title || '') : '';
+  // attr 的 bit0 是私密;新建时默认公开
+  folderFormPrivate.checked = mode === 'edit' && folder ? !!(folder.attr & 1) : false;
+  folderFormSubmitting = false;
+  folderFormConfirm.disabled = false;
+  folderFormMask.classList.add('show');
+  folderFormInput.focus();
+  if (mode === 'edit') folderFormInput.select();
 }
 
-function closeFavCreate() {
-  favCreateSubmitting = false;
-  favCreateMask.classList.remove('show');
+function closeFolderForm() {
+  folderFormSubmitting = false;
+  folderFormFolder = null;
+  folderFormMask.classList.remove('show');
 }
 
-async function submitFavCreate() {
-  if (favCreateSubmitting) return;
-  const title = favCreateInput.value.trim();
+async function submitFolderForm() {
+  const isCreate = folderFormMode === 'create';
+  // 提交中、或编辑时没带上是哪个夹子,都不提交
+  if (folderFormSubmitting || (!isCreate && !folderFormFolder)) return;
+  const title = folderFormInput.value.trim();
   if (!title) {
     showToast('请填写收藏夹名称');
-    favCreateInput.focus();
+    folderFormInput.focus();
     return;
   }
 
-  favCreateSubmitting = true;
-  favCreateConfirm.disabled = true;
-  favCreateConfirm.textContent = '创建中...';
+  const folder = folderFormFolder;
+  const privacy = folderFormPrivate.checked ? 1 : 0;
+  const failText = isCreate ? '新建收藏夹失败' : '保存收藏夹失败';
+  folderFormSubmitting = true;
+  folderFormConfirm.disabled = true;
+  folderFormConfirm.textContent = isCreate ? '创建中...' : '保存中...';
   try {
-    const data = await fetchJson('/api/account/favorites/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, privacy: favCreatePrivate.checked ? 1 : 0 }),
-    });
+    const data = await fetchJson(
+      isCreate ? '/api/account/favorites/create' : '/api/account/favorites/edit',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isCreate ? { title, privacy } : { mediaId: folder.id, title, privacy }),
+      }
+    );
     if (data.__status === 401) {
-      closeFavCreate();
+      closeFolderForm();
       renderNotLoggedIn();
       return;
     }
-    if (data.code !== 0) throw new Error(data.message || '新建收藏夹失败');
+    if (data.code !== 0) throw new Error(data.message || failText);
 
-    closeFavCreate();
-    await loadFavFolders();
-    showToast(`已创建「${title}」`);
-  } catch (err) {
-    favCreateSubmitting = false;
-    favCreateConfirm.disabled = false;
-    favCreateConfirm.textContent = '创建';
-    showToast(err.message || '新建收藏夹失败,请稍后重试');
-  }
-}
-
-/* ----------------------------- 编辑收藏夹 -----------------------------
- * 夹子行 "..." 菜单里的"编辑信息",对应 /api/account/favorites/edit
- * (上游 x/v3/fav/folder/edit:media_id + title + privacy)。
- * 表单样式与新建弹窗共用,只是不 prefill 空值而是沿用当前值。
- * -------------------------------------------------------------------- */
-
-const favEditMask = document.getElementById('favEditMask');
-const favEditInput = document.getElementById('favEditInput');
-const favEditPrivate = document.getElementById('favEditPrivate');
-const favEditConfirm = document.getElementById('favEditConfirm');
-let favEditFolder = null;
-let favEditSubmitting = false;
-
-document.getElementById('favEditCancel').addEventListener('click', () => closeFavEdit());
-// 点遮罩空白处关闭(弹窗内部的点击不关,同其它弹窗)
-favEditMask.addEventListener('click', (e) => {
-  if (e.target === favEditMask) closeFavEdit();
-});
-favEditConfirm.addEventListener('click', submitFavEdit);
-favEditInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') submitFavEdit();
-});
-
-function openFavEdit(folder) {
-  favEditFolder = folder;
-  favEditInput.value = folder.title || '';
-  // attr 的 bit0 是私密
-  favEditPrivate.checked = !!(folder.attr & 1);
-  favEditSubmitting = false;
-  favEditMask.classList.add('show');
-  favEditConfirm.disabled = false;
-  favEditConfirm.textContent = '保存';
-  favEditInput.focus();
-  favEditInput.select();
-}
-
-function closeFavEdit() {
-  favEditSubmitting = false;
-  favEditFolder = null;
-  favEditMask.classList.remove('show');
-}
-
-async function submitFavEdit() {
-  if (favEditSubmitting || !favEditFolder) return;
-  const title = favEditInput.value.trim();
-  if (!title) {
-    showToast('请填写收藏夹名称');
-    favEditInput.focus();
-    return;
-  }
-
-  const folder = favEditFolder;
-  favEditSubmitting = true;
-  favEditConfirm.disabled = true;
-  favEditConfirm.textContent = '保存中...';
-  try {
-    const data = await fetchJson('/api/account/favorites/edit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mediaId: folder.id,
-        title,
-        privacy: favEditPrivate.checked ? 1 : 0,
-      }),
-    });
-    if (data.__status === 401) {
-      closeFavEdit();
-      renderNotLoggedIn();
+    if (isCreate) {
+      closeFolderForm();
+      await loadFavFolders();
+      showToast(`已创建「${title}」`);
       return;
     }
-    if (data.code !== 0) throw new Error(data.message || '保存收藏夹失败');
 
     // 本地直接更新,不重拉列表(只改了名字/可见性,内容数没动)
     folder.title = title;
-    folder.attr = favEditPrivate.checked ? (folder.attr | 1) : (folder.attr & ~1);
+    folder.attr = privacy ? (folder.attr | 1) : (folder.attr & ~1);
     if (String(favDetailMediaId) === String(folder.id)) {
       favDetailTitle = title;
       document.getElementById('favDetailTitle').textContent = title;
     }
     renderFavFolders();
-    closeFavEdit();
+    closeFolderForm();
     showToast('已保存');
   } catch (err) {
-    favEditSubmitting = false;
-    favEditConfirm.disabled = false;
-    favEditConfirm.textContent = '保存';
-    showToast(err.message || '保存收藏夹失败,请稍后重试');
+    folderFormSubmitting = false;
+    folderFormConfirm.disabled = false;
+    folderFormConfirm.textContent = isCreate ? '创建' : '保存';
+    showToast(err.message || `${failText},请稍后重试`);
   }
 }
 
-// 夹子行 "..." 菜单里的"删除":先确认(里面可能还有内容),成功后再拉一次列表。
-// 删掉的如果是当前打开的这个,列表拉完会让第一个夹子顶上。
+// 夹子行 "..." 菜单里的"删除"(走 x/v3/fav/folder/del → /api/account/favorites/delete)。
+// 删除后重新拉一次列表:夹子带的内容多,本地减不如以服务端为准,也让空出来的位置
+// 由下一个夹子顶上。默认收藏夹上游不允许删除,菜单里就没有这一项(见 renderFavFolders)。
 // moreBtn 只是用来防连点(菜单点完就收了),失败时恢复的是它
 async function deleteFavFolder(folder, moreBtn) {
   if (!folder || (moreBtn && moreBtn.disabled)) return;
@@ -2506,22 +2489,15 @@ async function deleteFavFolder(folder, moreBtn) {
 }
 
 // 夹子行本身是"进这个夹子",菜单按钮和菜单项都要拦住这次点击。
-// 三分支写在同一个委托里(而不是各挂一个监听):点按钮时不会顺手进夹子。
-// 这两支还要 stopPropagation:document 上的"点别处收起菜单"会连自己这一次点击一起收到,
-// 不拦住的话菜单刚开就被关掉
+// 三分支写在同一个委托里(而不是各挂一个监听):点按钮时不会顺手进夹子
 document.getElementById('favFoldersGrid').addEventListener('click', (e) => {
   const menuItem = e.target.closest('.folder-menu-item');
   if (menuItem) {
-    e.stopPropagation();
     runFolderMenuAction(menuItem.closest('.folder-item'), menuItem.dataset.folderAction);
     return;
   }
-  const moreBtn = e.target.closest('.folder-more');
-  if (moreBtn) {
-    e.stopPropagation();
-    toggleFolderMenu(moreBtn);
-    return;
-  }
+  // "..." 按钮由悬停开关,点击只当没点
+  if (e.target.closest('.folder-more')) return;
   const item = e.target.closest('.folder-item');
   if (item) openFavFolder(item.dataset.id, item.dataset.title);
 });
@@ -2537,50 +2513,20 @@ document.getElementById('favFoldersGrid').addEventListener('keydown', (e) => {
 
 /* ----------------------------- 夹子行的 "..." 菜单 -----------------------------
  * 每一行右侧都有 "..." 按钮,菜单里是"编辑信息 / 删除"(默认收藏夹没有"删除")。
- * 同时只允许开一个:再点同一个按钮收起,点菜单项、点别处或 Esc 都收起。
+ * 开关逻辑与卡片上那个菜单共用 createMenuController,这里只补上带 aria 的那份配置。
  * -------------------------------------------------------------------- */
-
-let openFolderMenu = null;
-
-function closeFolderMenu() {
-  if (!openFolderMenu) return;
-  // 列表重绘过时这些元素可能已经不在文档里了
-  if (openFolderMenu.menu.isConnected) openFolderMenu.menu.hidden = true;
-  if (openFolderMenu.button.isConnected) {
-    openFolderMenu.button.classList.remove('active');
-    openFolderMenu.button.setAttribute('aria-expanded', 'false');
-  }
-  openFolderMenu = null;
-}
-
-function toggleFolderMenu(button) {
-  const menu = button.parentElement.querySelector('.folder-menu');
-  if (!menu) return;
-  const wasOpen = openFolderMenu && openFolderMenu.button === button;
-  closeFolderMenu();
-  if (wasOpen) return;
-  menu.hidden = false;
-  button.classList.add('active');
-  button.setAttribute('aria-expanded', 'true');
-  openFolderMenu = { button, menu };
-}
+const folderMenu = createMenuController('.folder-more', '.folder-menu', true);
+folderMenu.bind(document.getElementById('favFoldersGrid'));
 
 // 菜单项的动作都作用在"这一行对应的夹子"上,所以从夹子行上取 id 与标题
 function runFolderMenuAction(item, action) {
-  closeFolderMenu();
+  folderMenu.close();
   if (!item) return;
   const folder = favFolders.find((f) => String(f.id) === String(item.dataset.id));
   if (!folder) return;
-  if (action === 'edit') openFavEdit(folder);
+  if (action === 'edit') openFolderForm('edit', folder);
   else if (action === 'delete') deleteFavFolder(folder, item.querySelector('.folder-more'));
 }
-
-// 点别处 / Esc 收起夹子菜单(卡片上那个 "..." 菜单见 closeCardMenu 一处收口)
-document.addEventListener('click', () => closeFolderMenu());
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeFolderMenu();
-});
-window.addEventListener('scroll', closeFolderMenu, true);
 
 // 点左侧的夹子:切换右侧内容。源夹子的判定不再依赖某个"当前夹子"变量,
 // 卡片上的 data-menu-media-id 就是它自己渲染时的那个夹子
@@ -2898,18 +2844,14 @@ function updateFavLoadMoreUI() {
   document.getElementById('favLoadMoreBtn').addEventListener('click', () => loadFavDetail(false));
 }
 
-// 关注按钮、"看别人的关注/粉丝列表"等交互都要先看登录态:
-// 没登录就直接弹扫码登录,而不是发一个必然 401 的请求
-function onLoginStateChanged(state) {
-  isUserLoggedIn = !!(state && state.loggedIn);
-}
-
 // 登录失效时自己的主页/历史/收藏/投稿都不能看了,切回未登录页;别人的空间(?mid=)不用动
 function onUnauthorized() {
   if (!getUrlMid()) {
     closeRelationsModal();
     closeFavPick();
-    closeFavCreate();
+    closeFolderForm();
+    // 夹子列在未登录页里,收起菜单免得残留的 aria-expanded 留在旧节点上
+    folderMenu.close();
     const mainArea = document.getElementById('mainArea');
     if (mainArea) mainArea.style.display = 'none';
     renderNotLoggedIn();
