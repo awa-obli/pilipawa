@@ -1,0 +1,1711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>消息中心</title>
+<script src="/theme.js"></script>
+<link rel="icon" href="/favicon.ico" />
+<link rel="stylesheet" href="/common.css" />
+<style>
+  .content {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 20px 24px 24px;
+    display: flex;
+    gap: 16px;
+    /* 顶栏 56px 之外的高度都留给消息区,左侧栏目跟着面板等高 */
+    min-height: calc(100vh - 56px);
+  }
+
+  /* 左侧栏目 + 右侧内容,两块都是抬起的卡片(同设置页 .settings-card) */
+  .msg-nav {
+    flex: 0 0 190px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .msg-nav-title {
+    padding: 16px 18px 10px;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .msg-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 11px 18px;
+    font-size: 14px;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease;
+  }
+  .msg-nav-item:hover { background: var(--hover); }
+  .msg-nav-item.active {
+    background: var(--pink-soft);
+    color: var(--pink);
+    font-weight: 600;
+  }
+  .msg-nav-badge {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--pink);
+    color: var(--on-brand);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+  }
+
+  /* 高度随视口伸缩(顶栏 56px + 上下内边距 44px);窗口太矮时兜底 520px,整页滚动 */
+  .msg-panel {
+    flex: 1;
+    min-width: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 100px);
+    min-height: 520px;
+  }
+
+  /* 通知流在自己的面板里滚,不把整页撑长 */
+  #feedList { flex: 1; min-height: 0; overflow-y: auto; }
+
+  /* 私信: 左会话列表 + 右聊天窗 */
+  .im-wrap { display: flex; flex: 1; min-height: 0; }
+  .im-sessions {
+    flex: 0 0 300px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .im-sessions-header {
+    padding: 14px 16px;
+    font-size: 14px;
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .im-session-list { flex: 1; overflow-y: auto; }
+  .im-session-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+  .im-session-item:hover { background: var(--hover); }
+  .im-session-item.active { background: var(--pink-soft); }
+  .im-session-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--thumb-bg);
+    flex-shrink: 0;
+  }
+  .im-session-body { min-width: 0; flex: 1; }
+  .im-session-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .im-session-preview {
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .im-session-unread {
+    position: absolute;
+    right: 14px;
+    top: 14px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--pink);
+    color: var(--on-brand);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  .im-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .im-chat-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .im-chat-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .im-load-earlier { text-align: center; padding-bottom: 4px; }
+  .im-msg-row { display: flex; gap: 8px; max-width: 88%; }
+  .im-msg-row.mine { align-self: flex-end; flex-direction: row-reverse; }
+  .im-msg-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--thumb-bg);
+    flex-shrink: 0;
+  }
+  .im-msg-content { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .im-msg-row.mine .im-msg-content { align-items: flex-end; }
+  .im-msg-bubble {
+    background: var(--fill);
+    color: var(--text);
+    padding: 9px 13px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.6;
+    word-break: break-word;
+  }
+  .im-msg-row.mine .im-msg-bubble { background: var(--pink); color: var(--on-brand); }
+  .im-msg-bubble.muted { background: none; color: var(--text-3); font-style: italic; padding: 0; }
+  /* 系统提示 / 撤回提示居中一行,不是聊天消息 */
+  .im-msg-row.system { align-self: center; max-width: 100%; }
+  .im-msg-row.system .im-msg-content { align-items: center; text-align: center; }
+  .im-msg-row.system .im-msg-bubble.muted { font-size: 12px; }
+  /* 通知 / 视频推送 / 分享这类卡片消息 */
+  .im-card { min-width: 180px; }
+  .im-card-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .im-card-text { font-size: 13px; line-height: 1.6; }
+  .im-card-rows { margin-top: 6px; }
+  .im-card-row {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-2);
+    line-height: 1.8;
+  }
+  .im-card-label { display: block; color: var(--text-3); flex-shrink: 0; }
+  .im-msg-row.mine .im-card-title,
+  .im-msg-row.mine .im-card-row,
+  .im-msg-row.mine .im-card-text { color: var(--on-brand); }
+  .im-msg-row.mine .im-card-label { color: var(--on-brand); opacity: .8; }
+  .im-card-link {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--pink);
+    text-decoration: none;
+  }
+  .im-card-link:hover { color: var(--pink-dark); }
+  .im-msg-row.mine .im-card-link { color: var(--on-brand); text-decoration: underline; }
+  .im-msg-image {
+    max-width: 200px;
+    max-height: 240px;
+    border-radius: 8px;
+    display: block;
+  }
+  /* 表情图: 气泡正文与输入框里共用一套(框里的由 insertEmote 插成 <img data-emote-text>) */
+  .im-emote {
+    height: 20px;
+    width: auto;
+    vertical-align: text-bottom;
+    margin: 0 1px;
+  }
+  .im-emote.big { height: 36px; }
+  .im-input .im-emote { height: 20px; margin: 0 1px; }
+  .im-msg-time { font-size: 10px; color: var(--text-3); }
+  .im-empty-chat {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 13px;
+  }
+
+  .im-input-wrap { position: relative; border-top: 1px solid var(--border); padding: 8px 18px 12px; }
+  .im-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .im-toolbar button {
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    color: var(--icon);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .im-toolbar button:hover { background: var(--hover); }
+  .im-toolbar button:disabled { opacity: .5; cursor: default; }
+  /* 表情面板: 浮在输入框上方(相对 .im-input-wrap 定位),不占聊天区高度。
+     一行放几个由上游的包尺寸决定: 小表情 10 个,大表情 5 个,颜文字(纯文本格子)4 个 */
+  .im-emote-panel {
+    display: none;
+    position: absolute;
+    left: 18px;
+    bottom: calc(100% + 6px);
+    z-index: 30;
+    width: 360px;
+    max-width: calc(100% - 36px);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px var(--shadow);
+    overflow: hidden;
+  }
+  .im-emote-panel.show { display: block; }
+  /* "有新消息"提示: 与表情面板同一套定位(浮在输入框上方,不占聊天区高度)。
+     用户往上翻历史时它一直挂在那儿,不会让人以为这段时间没有新消息 */
+  .im-new-msg {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    z-index: 20;
+    padding: 5px 14px;
+    border: none;
+    border-radius: 14px;
+    background: var(--pink);
+    color: var(--on-brand);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 2px 8px var(--shadow);
+  }
+  .im-new-msg:hover { background: var(--pink-dark); }
+  .im-new-msg[hidden] { display: none; }
+  .im-emote-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 8px 8px 0;
+    overflow-x: auto;
+  }
+  .im-emote-tab {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    padding: 2px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+    opacity: .55;
+  }
+  .im-emote-tab img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .im-emote-tab:hover { background: var(--hover); opacity: 1; }
+  .im-emote-tab.active { background: var(--fill); opacity: 1; }
+  .im-emote-grid {
+    display: grid;
+    gap: 2px;
+    max-height: 220px;
+    padding: 8px;
+    overflow-y: auto;
+  }
+  .im-emote-grid.is-small { grid-template-columns: repeat(10, 1fr); }
+  .im-emote-grid.is-big { grid-template-columns: repeat(5, 1fr); }
+  .im-emote-grid.is-text { grid-template-columns: repeat(4, 1fr); }
+  .im-emote-item {
+    padding: 3px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+  }
+  .im-emote-item img { display: block; width: 100%; height: 28px; object-fit: contain; }
+  .im-emote-grid.is-big .im-emote-item img { height: 56px; }
+  /* 颜文字格子: 一段字符,放不下就省略,完整内容看 title */
+  .im-emote-item.is-text {
+    padding: 6px 4px;
+    font-size: 12px;
+    line-height: 1.2;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .im-emote-item:hover { background: var(--hover); }
+  .im-emote-empty {
+    margin: 0;
+    padding: 18px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-3);
+  }
+  /* 输入框用 contenteditable 的 div 而不是 textarea: 表情要以图片形式出现在框里,
+     textarea 只能放纯文本。高度随内容自然增长,到 max-height 后自己滚 */
+  .im-input {
+    width: 100%;
+    min-height: 64px;
+    max-height: 140px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.6;
+    font-family: inherit;
+    color: var(--text);
+    background: var(--fill);
+    outline: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .im-input:focus { border-color: var(--pink); }
+  /* 内容为空时显示占位提示(没有内容时 :empty 成立;只有一个空 <br> 的情况由 JS 清掉) */
+  .im-input:empty::before {
+    content: attr(data-placeholder);
+    color: var(--text-3);
+    pointer-events: none;
+  }
+  .im-input-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .im-char-count { font-size: 12px; color: var(--text-3); }
+  .im-send-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 22px;
+    background: var(--pink);
+    color: var(--on-brand);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .im-send-btn:hover { background: var(--pink-dark); }
+  .im-send-btn:disabled { opacity: .5; cursor: default; }
+
+  /* 通知流: 回复我的 / @我的 / 收到的赞 */
+  .feed-item {
+    display: flex;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    position: relative; /* 整卡可点: .feed-hit 的定位基准 */
+  }
+  /* 整卡可点,但不要悬停变色(只有鼠标指针变手型) */
+  .feed-hit { position: absolute; inset: 0; z-index: 1; }
+  .feed-avatar-link, .feed-actor { position: relative; z-index: 2; }
+  /* flex 默认 stretch 会把头像链接拉成整列高,那一整列都会跳主页;锁成头像那一块 40x40 */
+  .feed-avatar-link { flex-shrink: 0; align-self: flex-start; }
+  .feed-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--thumb-bg);
+    flex-shrink: 0;
+    display: block;
+  }
+  .feed-body { flex: 1; min-width: 0; }
+  .feed-row { display: flex; gap: 12px; align-items: flex-start; }
+  .feed-line1 { font-size: 14px; }
+  .feed-actor { color: var(--text); font-weight: 600; text-decoration: none; }
+  .feed-actor:hover { color: var(--pink); }
+  .feed-action { color: var(--text-2); margin-left: 4px; }
+  .feed-content {
+    display: block;
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: var(--fill);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.6;
+    word-break: break-word;
+  }
+  .feed-meta { margin-top: 8px; font-size: 12px; color: var(--text-3); }
+  .feed-thumb {
+    width: 64px;
+    height: 64px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--thumb-bg);
+    display: block;
+  }
+
+  /* 系统提示/协议修订这类消息居中一行,不是聊天消息 */
+  .im-msg-row.system { align-self: center; max-width: 100%; }
+
+  .msg-loading, .msg-empty {
+    padding: 60px 16px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-3);
+  }
+  /* 面板按视口定高,空态/加载态在整块里居中,不顶在顶上 */
+  .msg-panel > .msg-loading,
+  .msg-panel > .msg-empty { margin: auto; }
+  .msg-empty .login-btn { margin-top: 12px; }
+  .msg-more { text-align: center; padding: 16px 0; }
+  .msg-more-btn {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 7px 20px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .msg-more-btn:hover { border-color: var(--pink); color: var(--pink); }
+  .msg-more-btn:disabled { opacity: .6; cursor: default; }
+
+  /* 窄屏回到"内容撑高、整页滚动",面板不再按视口定高 */
+  @media (max-width: 820px) {
+    .content { flex-direction: column; padding: 16px 14px 40px; min-height: 0; }
+    .msg-nav { flex: none; width: 100%; }
+    .msg-panel { width: 100%; height: auto; min-height: 0; }
+    .im-wrap { flex-direction: column; flex: none; height: auto; }
+    .im-sessions {
+      flex: none;
+      height: 240px;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .im-chat-messages { height: 360px; flex: none; }
+    #feedList { flex: none; overflow-y: visible; }
+  }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="/" title="回到首页">
+      <img class="logo-img" src="/pilipawa-logo.png" alt="pilipawa" />
+    </a>
+    <div class="search-wrap">
+      <form class="search-box" id="searchForm">
+        <input id="keyword" type="text" placeholder="搜索你感兴趣的视频" autocomplete="off" />
+        <button class="icon-btn" type="submit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2"/>
+            <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </form>
+      <div class="history-dropdown" id="historyDropdown"></div>
+    </div>
+    <div class="nav-actions">
+      <div class="login-slot" id="loginSlot">
+        <button class="login-btn" type="button" onclick="openLoginModal()">登录</button>
+      </div>
+      <a class="icon-btn" id="navMsgBtn" href="/message" title="消息" aria-label="消息">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="3.5" width="22" height="17" rx="2.5" stroke="currentColor" stroke-width="2"/>
+          <path d="M2.2 5.9l9.8 7.4 9.8-7.4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="nav-badge" id="navMsgBadge" style="display:none;"></span>
+      </a>
+      <a class="icon-btn" id="navDynamicBtn" href="/dynamic" title="动态" aria-label="动态">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="2.2" width="22" height="7.3" rx="2.5" stroke="currentColor" stroke-width="2"/>
+          <rect x="1" y="14.5" width="14.7" height="7.3" rx="2.5" stroke="currentColor" stroke-width="2"/>
+        </svg>
+      </a>
+      <a class="icon-btn" id="navHistoryBtn" href="/account?tab=history" title="历史记录" aria-label="历史记录">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 6.1V12l3.7 2.6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+      <a class="icon-btn" id="navFavBtn" href="/account?tab=favorites" title="收藏夹" aria-label="收藏夹">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 1.54 L15.4 8.43 L23 9.54 L17.5 14.89 L18.8 22.46 L12 18.89 L5.2 22.46 L6.5 14.89 L1 9.54 L8.6 8.43 Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+      <a class="icon-btn" href="/settings" title="设置" aria-label="设置">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 扫码登录弹窗(登录 B 站账号,不是本站账号体系) -->
+<div class="login-modal-mask" id="loginModalMask" style="display:none;">
+  <div class="login-modal">
+    <button class="login-modal-close" type="button" onclick="closeLoginModal()">&times;</button>
+    <p class="login-modal-title">扫码登录 B 站账号</p>
+    <div class="login-qrcode-box">
+      <img id="loginQrcodeImg" width="180" height="180" alt="登录二维码" />
+      <div class="login-qrcode-mask" id="loginQrcodeMask">
+        <p id="loginQrcodeMaskText"></p>
+        <button class="login-refresh-btn" id="loginRefreshBtn" type="button" onclick="startLoginFlow()">刷新二维码</button>
+      </div>
+    </div>
+    <p class="login-modal-tip">请使用哔哩哔哩客户端扫码登录</p>
+  </div>
+</div>
+
+<div class="content">
+  <div class="msg-nav" id="msgNav">
+    <div class="msg-nav-title">消息中心</div>
+    <div class="msg-nav-item" data-tab="im">我的消息<span class="msg-nav-badge" data-badge="chat" style="display:none;"></span></div>
+    <div class="msg-nav-item" data-tab="reply">回复我的<span class="msg-nav-badge" data-badge="reply" style="display:none;"></span></div>
+    <div class="msg-nav-item" data-tab="at">@我的<span class="msg-nav-badge" data-badge="at" style="display:none;"></span></div>
+    <div class="msg-nav-item" data-tab="like">收到的赞<span class="msg-nav-badge" data-badge="like" style="display:none;"></span></div>
+  </div>
+  <div class="msg-panel" id="msgPanel"></div>
+</div>
+
+<div class="page-toast" id="pageToast"></div>
+
+<script src="/common.js"></script>
+<script>
+const msgPanel = document.getElementById('msgPanel');
+
+/* 目录: 我的消息是私信会话列表(上游 session_type 4),
+ * 另外三栏是通知流(x/msgfeed/*)。未读数统一由 common.js 的顶栏角标拉一次,
+ * 这里只负责画各栏的小角标 */
+const TABS = {
+  im: { kind: 'chat', label: '我的消息', sessionType: 1 },
+  reply: { kind: 'feed', label: '回复我的', badge: 'reply' },
+  at: { kind: 'feed', label: '@我的', badge: 'at' },
+  like: { kind: 'feed', label: '收到的赞', badge: 'like' },
+};
+
+const state = {
+  activeTab: 'im',
+  sessions: [],
+  feedList: [],
+  feedCursor: '0',
+  emotes: null,
+  emoteMap: {},
+  emoteIndex: 0,
+  chatSeq: 0,
+  openTalker: null,
+  // 往上翻历史时收到的、还没被看到的新消息条数("有新消息"提示用)
+  unseenNew: 0,
+  // 当前登录态的快照: 登录巡检每分钟回调一次,只有真的换了账号/登出才重画
+  loggedIn: false,
+  uid: '',
+};
+
+let toastTimer = null;
+function showToast(text, durationMs) {
+  const el = document.getElementById('pageToast');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), durationMs || 2400);
+}
+
+function formatMsgTime(ts) {
+  if (!ts) return '';
+  const d = new Date(Number(ts) * 1000);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (d.toDateString() === now.toDateString()) return `${hh}:${mm}`;
+  return `${d.getMonth() + 1}-${d.getDate()} ${hh}:${mm}`;
+}
+
+function emptyHTML(text, withLogin) {
+  return `<div class="msg-empty">${escapeHtml(text)}${
+    withLogin ? '<br><button class="login-btn" type="button" onclick="openLoginModal()">登录</button>' : ''
+  }</div>`;
+}
+
+async function getJson(url) {
+  const res = await fetch(url);
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  // 服务端统一回 { code:1, message },少数老接口回 { error },两边都要认
+  const message = (data && (data.message || data.error)) || `加载失败(${res.status})`;
+  if (!res.ok || (data && data.code === 1)) throw new Error(message);
+  return data || {};
+}
+
+/* ----------------------------- 左侧栏目 ----------------------------- */
+
+function setActiveTab(tab) {
+  state.activeTab = TABS[tab] ? tab : 'im';
+  document.querySelectorAll('.msg-nav-item').forEach((el) => {
+    el.classList.toggle('active', el.dataset.tab === state.activeTab);
+  });
+  // 栏目记在 URL 上,刷新/分享/从别处链回来都能落到同一栏
+  const url = new URL(window.location.href);
+  url.searchParams.set('tab', state.activeTab);
+  history.replaceState(null, '', url.pathname + url.search);
+}
+
+function renderBadges(counts) {
+  document.querySelectorAll('.msg-nav-badge').forEach((el) => {
+    const n = Number(counts[el.dataset.badge]) || 0;
+    el.textContent = n > 99 ? '99+' : String(n);
+    el.style.display = n > 0 ? '' : 'none';
+  });
+}
+
+// 未读数由 common.js 的顶栏角标统一拉,这里只负责画各栏目的小角标
+function refreshUnread() {
+  renderBadges(window.NavMessages ? window.NavMessages.counts() : {});
+}
+
+/* ----------------------------- 新消息轮询 -----------------------------
+ * 私信没有推送通道(上游那套要走 socket),只能定时拉一次会话列表:
+ * 列表的预览/未读/排序跟着上游走,开着的那条会话有新消息(上游 max_seqno 变了)
+ * 才重画聊天窗并重新标已读。页面切到后台不请求,回到前台补一次 */
+
+const MESSAGE_POLL_INTERVAL_MS = 10000;
+let messagePollTimer = null;
+let messagePolling = false;
+
+function startMessagePoll() {
+  if (messagePollTimer) return;
+  messagePollTimer = setInterval(pollMessages, MESSAGE_POLL_INTERVAL_MS);
+}
+
+function stopMessagePoll() {
+  clearInterval(messagePollTimer);
+  messagePollTimer = null;
+}
+
+function sessionStamp(session) {
+  return session ? `${session.lastSeqno || ''}|${session.lastTime || 0}` : '';
+}
+
+function totalSessionUnread() {
+  return state.sessions.reduce((sum, item) => sum + (Number(item.unreadCount) || 0), 0);
+}
+
+async function pollMessages() {
+  // 上一次还没回来就别叠加(上游慢的时候定时器会追上来)
+  if (messagePolling || document.hidden || !state.loggedIn || state.activeTab !== 'im') return;
+  messagePolling = true;
+  try {
+    let rows;
+    try {
+      const data = await getJson(`/api/message/sessions?type=${TABS.im.sessionType}`);
+      rows = data.list || [];
+    } catch (err) {
+      return; // 轮询失败不打扰用户,下一轮再来
+    }
+    // 请求期间可能切走了栏目,别拿旧结果盖回去
+    if (document.hidden || state.activeTab !== 'im') return;
+
+    const openKey = state.openTalker;
+    const stampBefore = sessionStamp(state.sessions.find((item) => item.key === openKey));
+    const unreadBefore = totalSessionUnread();
+    const listBefore = sessionListSignature();
+
+    mergeSessionList(rows);
+    if (sessionListSignature() !== listBefore) renderSessionList();
+
+    const openSession = state.sessions.find((item) => item.key === openKey);
+    if (openSession && sessionStamp(openSession) !== stampBefore) {
+      // 打开着的会话有新消息: 先标已读(它顺带刷顶栏角标),再补聊天窗尾部
+      markSessionRead(openSession);
+      clearSessionUnread(openSession);
+      refreshChatTail(state.chatSeq);
+    } else if (totalSessionUnread() !== unreadBefore && window.NavMessages) {
+      // 新消息在别的会话里: 只把顶栏与本页角标跟上
+      window.NavMessages.refresh().then(refreshUnread);
+    }
+  } finally {
+    messagePolling = false;
+  }
+}
+
+function loadTab(tab, preferTalker) {
+  const conf = TABS[tab];
+  if (!conf) return;
+  if (conf.kind === 'chat') loadSessions(conf.sessionType, preferTalker);
+  else loadFeed(tab);
+}
+
+/* ----------------------------- 会话列表 ----------------------------- */
+
+async function loadSessions(sessionType, preferTalker) {
+  const seq = ++state.chatSeq;
+  msgPanel.innerHTML = `<div class="im-wrap">
+    <div class="im-sessions">
+      <div class="im-sessions-header">最近消息</div>
+      <div class="im-session-list" id="imSessionList"><div class="msg-loading">正在加载...</div></div>
+    </div>
+    <div class="im-chat" id="imChat"><div class="im-empty-chat">请选择左侧的消息查看</div></div>
+  </div>`;
+
+  const listEl = document.getElementById('imSessionList');
+  try {
+    const data = await getJson(`/api/message/sessions?type=${sessionType}`);
+    if (seq !== state.chatSeq) return;
+    const prefer = preferTalker ? String(preferTalker) : '';
+    state.sessions = data.list || [];
+    // 从别人空间页的"发消息"进来时,没聊过的人在会话列表里还不存在,先补一条占位
+    if (prefer && !state.sessions.some((item) => item.talkerId === prefer)) {
+      state.sessions.unshift({
+        key: prefer,
+        talkerId: prefer,
+        sessionType: 1,
+        uname: '',
+        face: '',
+        unreadCount: 0,
+        ackSeqno: '',
+        preview: '',
+        lastTime: 0,
+      });
+    }
+    renderSessionList();
+
+    if (prefer) {
+      const target = state.sessions.find((item) => item.talkerId === prefer);
+      openChat(target);
+      return;
+    }
+    // 和官网消息中心一致: 进来就打开第一个会话,右侧不留空占位
+    const first = listEl.querySelector('.im-session-item');
+    if (first) first.click();
+  } catch (err) {
+    if (seq !== state.chatSeq) return;
+    listEl.innerHTML = emptyHTML(err.message);
+  }
+}
+
+// 列表整块重画: 自己发完消息、轮询到新消息都要用它。选中态靠 state.openTalker 还原,
+// 重画后事件要重新挂,滚动位置也要还回去(轮询每 10 秒一次,不能把列表顶回最上面)
+function renderSessionList() {
+  const listEl = document.getElementById('imSessionList');
+  if (!listEl) return;
+  if (!state.sessions.length) {
+    listEl.innerHTML = emptyHTML('暂时没有消息');
+    return;
+  }
+  const scrollTop = listEl.scrollTop;
+  listEl.innerHTML = state.sessions.map(sessionItemHTML).join('');
+  bindSessionClicks(listEl);
+  listEl.scrollTop = scrollTop;
+}
+
+// 列表内容的指纹: 轮询拿回来的东西和现在一样就不重画了
+function sessionListSignature() {
+  return state.sessions
+    .map((s) => `${s.key}|${s.uname}|${s.face}|${s.preview}|${s.unreadCount}|${s.lastTime}`)
+    .join('~');
+}
+
+// 把上游这一页会话并进现有列表: 认得的会话复用原对象(打开着的会话与正在发送的那条手里还攥着它,
+// 换成新对象会让后续更新落到没人看的副本上),上游还没有的会话(从别人空间页进来、还没发过消息的
+// 占位会话)留在最前面
+function mergeSessionList(rows) {
+  const byKey = new Map(state.sessions.map((item) => [item.key, item]));
+  const merged = rows.map((row) => {
+    const old = byKey.get(row.key);
+    if (!old) return row;
+    byKey.delete(row.key);
+    return Object.assign(old, row);
+  });
+  state.sessions = [...byKey.values()].concat(merged);
+}
+
+// 自己发出去的消息立刻反映到列表那一行(上游要等下一轮轮询才更新)
+function updateSessionPreview(session, preview) {
+  session.preview = preview;
+  session.lastTime = Math.floor(Date.now() / 1000);
+  state.sessions.sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0));
+  renderSessionList();
+}
+
+// 会话列表的预览是单行文本: 换行/连续空白压成一个空格,和服务端 singleLineText 一致
+function singleLinePreview(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+
+function bindSessionClicks(listEl) {
+  listEl.querySelectorAll('.im-session-item').forEach((el) => {
+    el.addEventListener('click', () => {
+      state.openTalker = el.dataset.key;
+      listEl.querySelectorAll('.im-session-item').forEach((other) => other.classList.toggle('active', other === el));
+      const session = state.sessions.find((item) => item.key === el.dataset.key);
+      if (session) openChat(session);
+    });
+  });
+}
+
+// 列表里没带昵称/头像的会话(没聊过的陌生人)补一次资料卡,补到就顺手更新列表与标题
+async function fillSessionProfile(session, seq) {
+  try {
+    const data = await getJson(`/api/up/info?mid=${encodeURIComponent(session.talkerId)}`);
+    if (seq !== state.chatSeq) return;
+    session.uname = data.name || session.uname;
+    session.face = data.avatar || session.face;
+    const item = document.querySelector(`.im-session-item[data-key="${session.key || session.talkerId}"]`);
+    if (item) {
+      const nameEl = item.querySelector('.im-session-name');
+      const faceEl = item.querySelector('.im-session-avatar');
+      if (nameEl && session.uname) nameEl.textContent = session.uname;
+      if (faceEl && session.face) faceEl.src = session.face;
+      item.style.visibility = '';
+    }
+    const header = document.getElementById('imChatHeader');
+    if (header && session.uname) header.textContent = session.uname;
+    applyAvatars();
+  } catch (err) {
+    // 补不到就继续显示 mid,不影响聊天
+  }
+}
+
+function sessionItemHTML(session) {
+  const key = session.key || session.talkerId;
+  return `
+    <div class="im-session-item${key === state.openTalker ? ' active' : ''}" data-key="${escapeHtml(key)}">
+      <img class="im-session-avatar" src="${escapeHtml(session.face || EMPTY_IMG)}" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" />
+      <div class="im-session-body">
+        <div class="im-session-name">${escapeHtml(session.uname || `用户${session.talkerId}`)}</div>
+        <div class="im-session-preview">${escapeHtml(session.preview || '')}</div>
+      </div>
+      ${session.unreadCount > 0 ? `<span class="im-session-unread">${session.unreadCount > 99 ? '99+' : session.unreadCount}</span>` : ''}
+    </div>`;
+}
+
+// 点开会话立刻把这一栏的未读清掉: 服务端标已读,本地同步角标,不等 60 秒轮询
+function clearSessionUnread(session) {
+  session.unreadCount = 0;
+  const item = document.querySelector(`.im-session-item[data-key="${session.key || session.talkerId}"]`);
+  if (item) {
+    const badge = item.querySelector('.im-session-unread');
+    if (badge) badge.remove();
+  }
+  if (window.NavMessages) window.NavMessages.refresh().then(refreshUnread);
+}
+
+async function markSessionRead(session) {
+  if (!session.ackSeqno && !session.unreadCount) return;
+  try {
+    await fetch('/api/message/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ talkerId: session.talkerId, ackSeqno: session.ackSeqno }),
+    });
+  } catch (err) {
+    // 标已读失败不影响聊天,下一次进来还会再试
+  }
+}
+
+async function openChat(session) {
+  const seq = ++state.chatSeq;
+  state.openTalker = session.key || session.talkerId;
+  hideNewMsgPill();
+  // 先标已读再清本地未读: markSessionRead 靠 unreadCount 判断"这条要不要报给上游"
+  markSessionRead(session);
+  clearSessionUnread(session);
+  // 从别人空间页进来的新会话没有昵称头像,补一次资料
+  if (!session.uname || !session.face) fillSessionProfile(session, seq);
+
+  const chat = document.getElementById('imChat');
+  if (!chat) return;
+  chat.innerHTML = `
+    <div class="im-chat-header" id="imChatHeader">${escapeHtml(session.uname || `用户${session.talkerId}`)}</div>
+    <div class="im-chat-messages" id="imMessages"><div class="msg-loading">正在加载...</div></div>
+    ${chatInputHTML()}`;
+
+  bindChatInput(session, seq);
+}
+
+// 输入框字数上限(按拼好的正文算,表情算它的 "[表情名]" 这些字符;服务端另按 2000 字节兜底)
+const MAX_MSG_LEN = 500;
+
+function chatInputHTML() {
+  return `<div class="im-input-wrap">
+      <div class="im-toolbar">
+        <button type="button" id="imEmoteBtn" title="表情">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="9" cy="10" r="1.2" fill="currentColor"/>
+            <circle cx="15" cy="10" r="1.2" fill="currentColor"/>
+            <path d="M8.2 14.2a4.4 4.4 0 0 0 7.6 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button type="button" id="imImageBtn" title="图片">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="8.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M4 16.5l4.5-4.5 3.5 3.5 3-3 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <input type="file" id="imImageFile" accept="image/*" hidden />
+      </div>
+      <!-- 输入框是 contenteditable 的 div(不是 textarea): 表情在框里直接显示成图,
+           发送时由 readInputText 还原成 "[表情名]" -->
+      <div class="im-input" id="imInput" contenteditable="true" data-placeholder="请输入消息内容"></div>
+      <div class="im-input-footer">
+        <span class="im-char-count" id="imCharCount">0/500</span>
+        <button class="im-send-btn" id="imSendBtn" type="button">发送</button>
+      </div>
+      <div class="im-emote-panel" id="imEmotePanel"></div>
+      <!-- 往上翻历史时收到新消息: 提示下面还有新的,点一下回到底部 -->
+      <button class="im-new-msg" id="imNewMsg" type="button" hidden></button>
+    </div>`;
+}
+
+async function bindChatInput(session, seq) {
+  const input = document.getElementById('imInput');
+  input.addEventListener('input', () => {
+    normalizeInput();
+    updateCharCount();
+  });
+  // 上限按拼好的正文算(表情算它的 "[表情名]" 这些字符),到顶就不再收输入
+  input.addEventListener('beforeinput', (e) => {
+    if (e.inputType.startsWith('delete')) return;
+    if (readInputText().length >= MAX_MSG_LEN) e.preventDefault();
+  });
+  // 只收纯文本粘贴: 直接贴 HTML 会把外来的标签/样式带进输入框
+  input.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+    const room = MAX_MSG_LEN - readInputText().length;
+    if (text && room > 0) insertAtCaret(text.slice(0, room), true);
+  });
+  document.getElementById('imSendBtn').addEventListener('click', () => sendMessage(session));
+  input.addEventListener('keydown', (e) => {
+    // Enter 发送,Shift+Enter 换行,和官网一致;输入法组词中的回车是"选词",不能拦
+    if (e.isComposing) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(session);
+    }
+  });
+  setupChatToolbar(session);
+
+  // 滚回底部就把"有新消息"那条提示收掉
+  const box = document.getElementById('imMessages');
+  box.addEventListener('scroll', () => {
+    if (nearChatBottom(box)) hideNewMsgPill();
+  });
+  document.getElementById('imNewMsg').addEventListener('click', () => {
+    box.scrollTop = box.scrollHeight;
+    hideNewMsgPill();
+  });
+
+  loadChatMessages(session, seq);
+}
+
+function nearChatBottom(box) {
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+}
+
+// 拉最近一页聊天记录并画出来(首次进入看这个会话时用)
+async function loadChatMessages(session, seq) {
+  const box = document.getElementById('imMessages');
+  if (!box) return;
+  try {
+    // 表情包和历史一起等: 正文里的 "[xxx]" 要靠表情映射才画得成图,
+    // 先画完再补就没机会了(已经画好的气泡不会自己回头变)
+    const [data] = await Promise.all([
+      getJson(`/api/message/history?talker_id=${encodeURIComponent(session.talkerId)}`),
+      loadEmotes(),
+    ]);
+    if (seq !== state.chatSeq) return;
+    box.innerHTML = renderMessageHistory(data.list || [], data.hasMore);
+    const more = document.getElementById('imLoadEarlier');
+    if (more) {
+      more.querySelector('button').addEventListener('click', () => loadEarlier(session, seq, more));
+    }
+    applyAvatars();
+    box.scrollTop = box.scrollHeight;
+  } catch (err) {
+    if (seq !== state.chatSeq) return;
+    box.innerHTML = emptyHTML(err.message);
+  }
+}
+
+/* --------------------- 轮询到新消息: 只补聊天窗尾部 ---------------------
+ * 用户可能正翻着更早的历史,整块重画会把人踢回去、也会把翻出来的记录收走。
+ * 这里只把"最近这一页"重新画在尾部(比这一页更早的记录原样不动):
+ * 被撤回/被系统撤回的那条也顺带在这一步修正。人没贴底时另给一条提示,
+ * 免得他以为这段时间没有新消息 */
+
+function chatWatermark(box) {
+  let newest = 0;
+  box.querySelectorAll('.im-msg-row').forEach((row) => {
+    const seqno = Number(row.dataset.seqno);
+    if (seqno > newest) newest = seqno;
+  });
+  return newest;
+}
+
+async function refreshChatTail(seq) {
+  const box = document.getElementById('imMessages');
+  const session = state.sessions.find((item) => item.key === state.openTalker);
+  if (!box || !session) return;
+  const watermark = chatWatermark(box);
+
+  let list;
+  try {
+    const [data] = await Promise.all([
+      getJson(`/api/message/history?talker_id=${encodeURIComponent(session.talkerId)}`),
+      loadEmotes(),
+    ]);
+    list = data.list || [];
+  } catch (err) {
+    return; // 拉不到就留着现状,下一轮轮询再来
+  }
+  if (seq !== state.chatSeq) return;
+
+  const seqnos = list.map((msg) => Number(msg.seqno)).filter((n) => n > 0);
+  if (!seqnos.length) return;
+  const pageMin = Math.min(...seqnos);
+
+  // 先记下视野顶端那一行: 尾部重画后要把它挪回原处,不能把正在翻历史的人顶走。
+  // 位置一律用 getBoundingClientRect 量(offsetTop 是相对定位祖先的,和 scrollTop 不是一个坐标系)
+  const rows = [...box.querySelectorAll('.im-msg-row')];
+  const boxTop = box.getBoundingClientRect().top;
+  const anchor = rows.find((row) => row.getBoundingClientRect().bottom > boxTop);
+  const anchorSeq = anchor ? anchor.dataset.seqno : '';
+  const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
+  const atBottom = nearChatBottom(box);
+
+  // 这一页覆盖到的尾部(以及自己刚发、还没有 seqno 的那条)先摘掉再按上游重画
+  rows.forEach((row) => {
+    const seqno = Number(row.dataset.seqno);
+    if (!seqno || seqno >= pageMin) row.remove();
+  });
+
+  box.insertAdjacentHTML('beforeend', list.map((msg) => messageRowHTML(msg)).join(''));
+  applyAvatars();
+
+  if (atBottom) {
+    box.scrollTop = box.scrollHeight;
+  } else if (anchorSeq) {
+    const again = box.querySelector(`.im-msg-row[data-seqno="${anchorSeq}"]`);
+    if (again) box.scrollTop += again.getBoundingClientRect().top - anchorTop;
+  }
+
+  const fresh = list.filter((msg) => Number(msg.seqno) > watermark).length;
+  if (fresh && !atBottom) showNewMsgPill(fresh);
+}
+
+// "下面还有新消息": 人没贴底时不打断他,只在输入框上方浮一条,点它回到最下面
+function showNewMsgPill(count) {
+  const pill = document.getElementById('imNewMsg');
+  if (!pill) return;
+  state.unseenNew += count;
+  pill.textContent = `${state.unseenNew} 条新消息 ↓`;
+  pill.hidden = false;
+}
+
+function hideNewMsgPill() {
+  state.unseenNew = 0;
+  const pill = document.getElementById('imNewMsg');
+  if (pill) pill.hidden = true;
+}
+
+// 只有确实还有更早的消息时才放"加载更早"那颗按钮,否则它点了什么都不会发生
+function renderMessageHistory(list, hasMore) {
+  if (!list.length) return emptyHTML('暂无消息记录');
+  const more = hasMore
+    ? '<div class="im-load-earlier" id="imLoadEarlier"><button class="msg-more-btn" type="button">加载更早的消息</button></div>'
+    : '';
+  return more + list.map((msg) => messageRowHTML(msg)).join('');
+}
+
+// 往上翻一页: 用当前最早一条的序列号当游标,新消息插在"加载更早"按钮后面。
+// 翻不动(没有更早的、或拿回来的第一批还是同一批)就撤掉按钮,避免一直点一直冒同一条
+async function loadEarlier(session, seq, wrap) {
+  const box = document.getElementById('imMessages');
+  const button = wrap.querySelector('button');
+  if (!box || !button) return;
+  const oldestRow = box.querySelector('.im-msg-row');
+  const firstSeq = oldestRow ? oldestRow.dataset.seqno : '';
+  if (!firstSeq) return;
+  button.disabled = true;
+  button.textContent = '加载中...';
+  try {
+    const data = await getJson(
+      `/api/message/history?talker_id=${encodeURIComponent(session.talkerId)}` +
+        `&begin_seqno=${encodeURIComponent(firstSeq)}`
+    );
+    if (seq !== state.chatSeq) return;
+    const list = data.list || [];
+    const inserted = list.filter((msg) => msg.seqno !== firstSeq);
+    if (inserted.length) wrap.insertAdjacentHTML('afterend', inserted.map((msg) => messageRowHTML(msg)).join(''));
+    applyAvatars();
+    if (!data.hasMore || !inserted.length) wrap.remove();
+    else {
+      button.disabled = false;
+      button.textContent = '加载更早的消息';
+    }
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = '加载失败,点击重试';
+  }
+}
+
+// 1x1 透明图: 头像地址要等 applyAvatars() 才知道,先用它占位,免得空 src 让浏览器重请求当前页
+const EMPTY_IMG = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+function messageRowHTML(msg) {
+  // msg_status=2 是被系统撤回: 官网连提示都不给,这里也整条不画
+  if (msg.status === 2) return '';
+  // 系统提示("对方主动回复或关注你前,最多发送1条消息"这类)与被撤回的消息都不是聊天消息,居中弱化单独一行
+  if ((msg.type === 'card' && msg.system) || msg.status === 1) {
+    // 撤回这条不带时间: 上游给的是原消息的发送时间(撤回是另发的一条控制消息),标在这里反而误导
+    const time = msg.status === 1
+      ? ''
+      : `<div class="im-msg-time">${escapeHtml(formatMsgTime(msg.timestamp))}</div>`;
+    return (
+      `<div class="im-msg-row system" data-seqno="${escapeHtml(msg.seqno)}" data-self="0">` +
+      `<div class="im-msg-content">${messageBubbleHTML(msg)}${time}</div>` +
+      `</div>`
+    );
+  }
+  // 标签之间不留换行缩进: 消息区是 flex + white-space: pre-wrap,多余空白会被当内容撑出空行
+  return (
+    `<div class="im-msg-row${msg.isMine ? ' mine' : ''}" data-seqno="${escapeHtml(msg.seqno)}" data-self="${msg.isMine ? '1' : '0'}">` +
+    `<img class="im-msg-avatar" src="${EMPTY_IMG}" alt="" referrerpolicy="no-referrer" />` +
+    `<div class="im-msg-content">${messageBubbleHTML(msg)}<div class="im-msg-time">${escapeHtml(formatMsgTime(msg.timestamp))}</div></div>` +
+    `</div>`
+  );
+}
+
+function messageBubbleHTML(msg) {
+  // 被撤回的消息上游仍会把正文给出来,这里只留一句提示。
+  // 只能撤回自己发的消息,所以撤回方就是这条的发送方
+  if (msg.status === 1) {
+    return `<div class="im-msg-bubble muted">${msg.isMine ? '你' : '对方'}撤回了一条消息</div>`;
+  }
+  if (msg.type === 'image' && msg.url) {
+    return `<div class="im-msg-bubble"><img class="im-msg-image" src="${escapeHtml(msg.url)}" alt="" referrerpolicy="no-referrer" /></div>`;
+  }
+  if (msg.type === 'text') {
+    return `<div class="im-msg-bubble">${renderEmoteText(msg.text || '')}</div>`;
+  }
+  if (msg.type === 'card') return cardBubbleHTML(msg);
+  return `<div class="im-msg-bubble muted">暂不支持的消息类型</div>`;
+}
+
+// 通知 / 视频推送 / 分享这类消息: 标题 + 正文 + 补充信息 + 可点的跳转。
+// 各段用数组拼、不留换行缩进: 气泡是 white-space: pre-wrap,模板里的空白会被当正文渲染出来
+function cardBubbleHTML(card) {
+  if (card.system) return `<div class="im-msg-bubble muted">${escapeHtml(card.text || '')}</div>`;
+  const parts = [];
+  if (card.title) parts.push(`<div class="im-card-title">${escapeHtml(card.title)}</div>`);
+  if (card.cover) parts.push(`<img class="im-msg-image" src="${escapeHtml(card.cover)}" alt="" referrerpolicy="no-referrer" />`);
+  if (card.text) parts.push(`<div class="im-card-text">${renderEmoteText(card.text)}</div>`);
+  const rows = (card.modules || [])
+    .map(
+      (m) =>
+        `<div class="im-card-row"><span class="im-card-label">${escapeHtml(m.title || '')}</span><span>${escapeHtml(
+          m.detail || ''
+        )}</span></div>`
+    )
+    .join('');
+  if (rows) parts.push(`<div class="im-card-rows">${rows}</div>`);
+  if (card.channel) {
+    parts.push(
+      `<a class="im-card-link" href="${escapeHtml(card.channel)}" target="_blank" rel="noreferrer">查看详情</a>`
+    );
+  }
+  return `<div class="im-msg-bubble"><div class="im-card">${parts.join('')}</div></div>`;
+}
+
+/* ----------------------------- 表情 -----------------------------
+ * 数据源: /api/emote/panel?business=im(私信那一套)。表情包只拉一次,
+ * 点某个表情就插进输入框(见 insertEmote): 图片表情插成 <img>,颜文字插原文,
+ * 发出去的正文里存的是对应的 "[表情名]" 占位符。
+ * --------------------------------------------------------------- */
+
+// 私信正文里的表情是 [tv_doge] 这类文本,按表情面板的映射换成图片
+function renderEmoteText(text) {
+  const safe = escapeHtml(text);
+  if (!Object.keys(state.emoteMap).length) return safe;
+  return safe.replace(/\[[^\[\]\n]{1,40}\]/g, (token) => {
+    const emote = state.emoteMap[token];
+    if (!emote) return token;
+    const big = emote.size === 2 ? ' big' : '';
+    return `<img class="im-emote${big}" src="${escapeHtml(emote.url)}" alt="${escapeHtml(token)}" referrerpolicy="no-referrer" />`;
+  });
+}
+
+// 拉不到时不缓存,下次打开面板还会再试;返回值给调用方判断成败
+async function loadEmotes() {
+  if (state.emotes) return state.emotes;
+  try {
+    const data = await getJson('/api/emote/panel?business=im');
+    state.emotes = data.packages || [];
+    state.emoteIndex = 0;
+    const map = {};
+    state.emotes.forEach((pkg) => {
+      (pkg.emotes || []).forEach((emote) => {
+        // 颜文字没有图片地址,是纯文本,不需要进图片映射
+        if (emote.text && emote.url) map[emote.text] = { url: emote.url, size: emote.size };
+      });
+    });
+    state.emoteMap = map;
+  } catch (err) {
+    return null;
+  }
+  return state.emotes;
+}
+
+// 多表情包时上面一排包图标当页签(只有一个包就不显示),下面是对应表情的网格
+function renderEmotePanel() {
+  const panel = document.getElementById('imEmotePanel');
+  if (!panel) return;
+  const packages = state.emotes || [];
+  const pkg = packages[state.emoteIndex] || packages[0];
+  if (!pkg) {
+    panel.innerHTML = '<p class="im-emote-empty">暂时没有可用的表情</p>';
+    return;
+  }
+
+  const tabs = packages.length > 1 ? `<div class="im-emote-tabs">${
+    packages.map((p, i) => {
+      // 页签用包的标志图;万一上游没给,退回包里第一个图片表情(颜文字包整包没有图片)
+      const icon = p.icon || (p.emotes.find((e) => e.url) || {}).url || '';
+      return `<button class="im-emote-tab${i === state.emoteIndex ? ' active' : ''}" type="button"
+              data-emote-package="${i}" title="${escapeHtml(p.name || '')}">
+          ${icon ? `<img src="${escapeHtml(icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : ''}
+        </button>`;
+    }).join('')
+  }</div>` : '';
+
+  // 颜文字包没有图片地址,整包按文本格子渲染;图片表情按包尺寸分行(小的一行 10 个,大的一行 5 个)
+  const gridClass = !pkg.emotes[0].url ? 'is-text' : (pkg.size === 2 ? 'is-big' : 'is-small');
+  const grid = pkg.emotes.map((e) => `
+      <button class="im-emote-item${e.url ? '' : ' is-text'}" type="button"
+              data-emote-text="${escapeHtml(e.text)}"${e.url ? ` data-emote-url="${escapeHtml(e.url)}"` : ''}
+              title="${escapeHtml(e.text)}">
+        ${e.url ? `<img src="${escapeHtml(e.url)}" alt="${escapeHtml(e.text)}" loading="lazy" referrerpolicy="no-referrer" />` : escapeHtml(e.text)}
+      </button>`).join('');
+
+  panel.innerHTML = tabs + `<div class="im-emote-grid ${gridClass}">${grid}</div>`;
+}
+
+function closeEmotePanel() {
+  const panel = document.getElementById('imEmotePanel');
+  if (panel) panel.classList.remove('show');
+}
+
+async function toggleEmotePanel() {
+  const panel = document.getElementById('imEmotePanel');
+  if (!panel) return;
+  if (panel.classList.contains('show')) {
+    closeEmotePanel();
+    return;
+  }
+
+  panel.classList.add('show');
+  if (state.emotes) {
+    renderEmotePanel();
+    return;
+  }
+
+  panel.innerHTML = '<p class="im-emote-empty">加载中…</p>';
+  const packages = await loadEmotes();
+  if (!panel.classList.contains('show')) return; // 加载期间被关掉了
+  if (!packages) {
+    panel.innerHTML = '<p class="im-emote-empty">表情加载失败</p>';
+    return;
+  }
+  renderEmotePanel();
+}
+
+// 输入框里实际内容拼回成纯文本: 图片表情还原成 "[表情名]",换行还原成 \n
+function readInputText() {
+  const input = document.getElementById('imInput');
+  if (!input) return '';
+  let out = '';
+  const walk = (parent) => {
+    for (const node of parent.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) out += node.nodeValue;
+      else if (node.nodeName === 'IMG') out += node.dataset.emoteText || '';
+      else if (node.nodeName === 'BR') out += '\n';
+      else {
+        walk(node);
+        // 粘贴/回车兜底:浏览器自动包的段落算一次换行
+        if (node.nodeName === 'DIV' || node.nodeName === 'P') out += '\n';
+      }
+    }
+  };
+  walk(input);
+  return out;
+}
+
+function updateCharCount() {
+  const el = document.getElementById('imCharCount');
+  if (el) el.textContent = `${readInputText().length}/${MAX_MSG_LEN}`;
+}
+
+// 内容删光后浏览器会留下一个空 <br>,会让 :empty 的占位提示失效,顺手清掉
+function normalizeInput() {
+  const input = document.getElementById('imInput');
+  if (input && input.innerHTML === '<br>') input.innerHTML = '';
+}
+
+// execCommand 虽然被标成废弃,但它是目前唯一能让插入动作进入浏览器撤销栈的接口(Ctrl+Z 能退回)
+function insertAtCaret(content, asText) {
+  focusInputAtEnd();
+  document.execCommand(asText ? 'insertText' : 'insertHTML', false, content);
+  updateCharCount();
+}
+
+// 输入框还没聚焦过时插入: 把光标摆到末尾,别插到开头去
+function focusInputAtEnd() {
+  const input = document.getElementById('imInput');
+  if (!input || input.contains(document.activeElement)) return;
+  input.focus();
+  const range = document.createRange();
+  range.selectNodeContents(input);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+// 图片表情插 <img>(框里看到的是图);颜文字包的纯文本表情直接插文本
+function insertEmote(btn) {
+  const text = btn.dataset.emoteText;
+  if (!btn.dataset.emoteUrl) {
+    insertAtCaret(text, true);
+    return;
+  }
+  insertAtCaret(`<img class="im-emote" src="${escapeHtml(btn.dataset.emoteUrl)}"`
+    + ` alt="${escapeHtml(text)}" data-emote-text="${escapeHtml(text)}" referrerpolicy="no-referrer" />`);
+}
+
+function setupChatToolbar(session) {
+  const panel = document.getElementById('imEmotePanel');
+  const emoteBtn = document.getElementById('imEmoteBtn');
+  const imageBtn = document.getElementById('imImageBtn');
+  const fileInput = document.getElementById('imImageFile');
+
+  emoteBtn.addEventListener('click', toggleEmotePanel);
+  // 表情项/页签/表情按钮按下时不让输入框失焦: 光标留在原地,内容才插得回用户点的位置
+  const keepInputFocus = (e) => {
+    if (e.target.closest('.im-emote-item, .im-emote-tab, #imEmoteBtn')) e.preventDefault();
+  };
+  emoteBtn.addEventListener('mousedown', keepInputFocus);
+  panel.addEventListener('mousedown', keepInputFocus);
+  panel.addEventListener('click', (e) => {
+    // 面板内一律自己消化: 换包页签会重画面板,被点到的那颗按钮当场就脱离文档,
+    // 事件再冒到 document 上时 closest('#imEmotePanel') 已经找不到它,会被当成"点了外面"收起
+    e.stopPropagation();
+    const tab = e.target.closest('[data-emote-package]');
+    if (tab) {
+      state.emoteIndex = Number(tab.dataset.emotePackage) || 0;
+      renderEmotePanel();
+      return;
+    }
+    const item = e.target.closest('[data-emote-text]');
+    if (item) insertEmote(item);
+  });
+
+  imageBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    imageBtn.disabled = true;
+    try {
+      const res = await fetch('/api/reply/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'image/png' },
+        body: file,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.url) throw new Error((data && (data.message || data.error)) || '图片上传失败');
+      await sendMessage(session, { url: data.url, width: data.width, height: data.height });
+    } catch (err) {
+      showToast(err.message || '图片上传失败');
+    } finally {
+      imageBtn.disabled = false;
+      fileInput.value = '';
+    }
+  });
+}
+
+async function sendMessage(session, image) {
+  const input = document.getElementById('imInput');
+  const text = readInputText().trim();
+  if (!image && !text) return;
+  const button = document.getElementById('imSendBtn');
+  if (button) button.disabled = true;
+  try {
+    const payload = { talkerId: session.talkerId };
+    if (image) {
+      payload.imageUrl = image.url;
+      payload.imageWidth = image.width || 0;
+      payload.imageHeight = image.height || 0;
+    } else {
+      payload.content = text;
+    }
+    const res = await fetch('/api/message/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.code !== 0) throw new Error((data && (data.message || data.error)) || '发送失败');
+
+    // 发完就地补一条自己的消息,不整块重画(重画会打断正在输入的内容)
+    const box = document.getElementById('imMessages');
+    const empty = box.querySelector('.msg-empty');
+    if (empty) empty.remove();
+    const mine = image
+      ? { isMine: true, type: 'image', url: image.url, timestamp: Math.floor(Date.now() / 1000), seqno: '' }
+      : { isMine: true, type: 'text', text, timestamp: Math.floor(Date.now() / 1000), seqno: '' };
+    box.insertAdjacentHTML('beforeend', messageRowHTML(mine));
+    applyAvatars();
+    box.scrollTop = box.scrollHeight;
+    // 左边列表那一行也跟着变,不等下一轮轮询
+    updateSessionPreview(session, image ? '[图片]' : singleLinePreview(text));
+    if (!image) {
+      input.innerHTML = '';
+      updateCharCount();
+    }
+  } catch (err) {
+    showToast(err.message || '发送失败');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+// 气泡头像统一补上: 自己的用登录头像,对方的用会话头像
+function applyAvatars() {
+  const session = state.sessions.find((item) => (item.key || item.talkerId) === state.openTalker);
+  document.querySelectorAll('.im-msg-row').forEach((row) => {
+    const img = row.querySelector('.im-msg-avatar');
+    if (!img) return;
+    img.src = row.dataset.self === '1' ? myAvatar || EMPTY_IMG : (session && session.face) || EMPTY_IMG;
+  });
+}
+
+/* ----------------------------- 通知流 ----------------------------- */
+
+async function loadFeed(kind) {
+  const seq = ++state.chatSeq;
+  state.feedList = [];
+  state.feedCursor = '0';
+  msgPanel.innerHTML = '<div class="msg-loading">正在加载...</div>';
+  await loadFeedPage(kind, seq, true);
+}
+
+async function loadFeedPage(kind, seq, isFirst) {
+  try {
+    const data = await getJson(`/api/message/feed?type=${kind}&cursor=${encodeURIComponent(state.feedCursor)}`);
+    if (seq !== state.chatSeq) return;
+    state.feedList = state.feedList.concat(data.list || []);
+    state.feedCursor = data.cursor || '';
+
+    if (isFirst) {
+      if (!state.feedList.length) {
+        msgPanel.innerHTML = emptyHTML('暂时没有相关消息');
+        return;
+      }
+      // "加载更多"放在列表末尾(和列表同一个滚动容器),跟着列表滚,不钉在面板底部
+      msgPanel.innerHTML = `<div id="feedList">${state.feedList.map((item) => feedItemHTML(item, kind)).join('')}<div class="msg-more" id="feedMore"></div></div>`;
+    } else {
+      document.getElementById('feedMore').insertAdjacentHTML('beforebegin', (data.list || []).map((item) => feedItemHTML(item, kind)).join(''));
+    }
+
+    const moreEl = document.getElementById('feedMore');
+    moreEl.innerHTML = data.hasMore ? '<button class="msg-more-btn" type="button">加载更多</button>' : '';
+    if (data.hasMore) {
+      moreEl.querySelector('button').addEventListener('click', () => {
+        moreEl.innerHTML = '<button class="msg-more-btn" type="button" disabled>加载中...</button>';
+        loadFeedPage(kind, seq, false);
+      });
+    }
+  } catch (err) {
+    if (seq !== state.chatSeq) return;
+    if (isFirst) msgPanel.innerHTML = emptyHTML(err.message);
+    else {
+      const moreEl = document.getElementById('feedMore');
+      moreEl.innerHTML = `<button class="msg-more-btn" type="button">${escapeHtml(err.message)}</button>`;
+      moreEl.querySelector('button').addEventListener('click', () => loadFeedPage(kind, seq, false));
+    }
+  }
+}
+
+const FEED_ACTIONS = {
+  reply: '回复了我的评论',
+  at: '在评论中提到了我',
+  like: '赞了我的内容',
+};
+
+function feedItemHTML(item, kind) {
+  const profile = item.actorMid ? `/account?mid=${encodeURIComponent(item.actorMid)}` : '';
+  // 整卡跳视频: 优先 bvid;只有上游给的 uri 确实是"视频型"时才退回 av 号
+  // (uri 形如 bilibili://reply/… 的是评论,里面的数字不是视频号,不能拿来跳)
+  const uri = String(item.uri || '');
+  const avMatch = uri.match(/bilibili:\/\/video\/(\d+)|\/video\/av(\d+)/);
+  const avId = avMatch ? avMatch[1] || avMatch[2] : '';
+  const video = item.bvid
+    ? `/player?bv=${encodeURIComponent(item.bvid)}`
+    : avId ? `/player?av=${encodeURIComponent(avId)}` : '';
+  const avatar = `<img class="feed-avatar" src="${escapeHtml(item.actorFace || '')}" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" />`;
+  const name = escapeHtml(item.actorName || 'B站用户');
+  const action = escapeHtml(item.actionText || (kind === 'like' && item.likeCount > 1 ? `${item.likeCount} 人` : '') || FEED_ACTIONS[kind] || '');
+  const content = item.content ? `<div class="feed-content">${escapeHtml(item.content)}</div>` : '';
+  const thumb = item.thumb
+    ? `<img class="feed-thumb" src="${escapeHtml(item.thumb)}" alt="" referrerpolicy="no-referrer" />`
+    : '';
+  // 铺满整张卡的空链接: 不嵌套 <a>,头像/昵称靠 z-index 抬在它上面,各跳各的
+  const hit = video ? `<a class="feed-hit" href="${escapeHtml(video)}" aria-label="查看对应视频"></a>` : '';
+  return `<div class="feed-item">
+    ${profile ? `<a class="feed-avatar-link" href="${escapeHtml(profile)}">${avatar}</a>` : avatar}
+    <div class="feed-body">
+      <div class="feed-row">
+        <div class="feed-body">
+          <div class="feed-line1">${
+            profile ? `<a class="feed-actor" href="${escapeHtml(profile)}">${name}</a>` : `<span class="feed-actor">${name}</span>`
+          }<span class="feed-action">${action}</span></div>
+          ${content}
+          <div class="feed-meta">${escapeHtml(formatMsgTime(item.time))}</div>
+        </div>
+        ${thumb}
+      </div>
+    </div>
+    ${hit}
+  </div>`;
+}
+
+/* ----------------------------- 入口 ----------------------------- */
+
+let myAvatar = '';
+
+function renderLoggedOut() {
+  document.getElementById('msgNav').style.display = 'none';
+  msgPanel.innerHTML = emptyHTML('登录后可查看私信与消息通知', true);
+}
+
+function renderLoggedIn() {
+  document.getElementById('msgNav').style.display = '';
+  loadTab(state.activeTab, getUrlTalker());
+}
+
+// 登录态每分钟都会复核一次,同一个账号反复回调时不能重画当前栏目,
+// 否则正在看的会话/翻到一半的列表会被整块刷掉
+function onLoginStateChanged(loginState) {
+  const loggedIn = !!(loginState && loginState.loggedIn);
+  const uid = loggedIn ? String(loginState.uid || '') : '';
+  const changed = loggedIn !== state.loggedIn || uid !== state.uid;
+
+  if (loggedIn) {
+    myAvatar = loginState.avatar || '';
+    state.loggedIn = true;
+    state.uid = uid;
+  } else {
+    myAvatar = '';
+    state.loggedIn = false;
+    state.uid = '';
+  }
+
+  if (changed) clearLoaded();
+  if (window.NavMessages) window.NavMessages.refresh().then(refreshUnread);
+  if (loggedIn) startMessagePoll();
+  else stopMessagePoll();
+  if (!changed) return;
+  if (loggedIn) renderLoggedIn();
+  else renderLoggedOut();
+}
+
+// 换账号/登出时把上一个账号的内容清掉,免得重画前还挂着旧数据
+function clearLoaded() {
+  state.chatSeq += 1;
+  state.sessions = [];
+  state.feedList = [];
+  state.openTalker = null;
+  state.emotes = null;
+  state.emoteMap = {};
+  state.emoteIndex = 0;
+  state.unseenNew = 0;
+}
+
+function getUrlTab() {
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return tab && TABS[tab] ? tab : null;
+}
+// 别人空间页的"发消息"带 ?talker_id= 进来,优先打开那一条会话
+function getUrlTalker() {
+  const talker = new URLSearchParams(window.location.search).get('talker_id');
+  return talker && /^\d{1,20}$/.test(talker) ? talker : '';
+}
+
+function onUnauthorized() {
+  renderLoggedOut();
+}
+
+/* ----------------------------- 顶部导航搜索框 -----------------------------
+ * 本页不展示搜索结果,提交后跳转到 /search(搜索历史与建议在 common.js 里) */
+
+const searchForm = document.getElementById('searchForm');
+const searchInput = document.getElementById('keyword');
+
+searchForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const keyword = searchInput.value.trim();
+  if (!keyword) return;
+  addHistory(keyword);
+  hideHistoryDropdown();
+  window.location.href = `/search?keyword=${encodeURIComponent(keyword)}`;
+});
+
+document.getElementById('msgNav').addEventListener('click', (e) => {
+  const item = e.target.closest('.msg-nav-item[data-tab]');
+  if (!item) return;
+  setActiveTab(item.dataset.tab);
+  loadTab(state.activeTab);
+});
+
+// 点面板外面 / 按 Esc 收起表情面板。输入区每个会话都会整块重画,这两个监听只挂一次
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#imEmoteBtn, #imEmotePanel')) return;
+  closeEmotePanel();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeEmotePanel();
+});
+
+// 从后台切回来立刻补一次(轮询在页面不可见时不发请求)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) pollMessages();
+});
+
+setActiveTab(getUrlTalker() ? 'im' : getUrlTab() || 'im');
+msgPanel.innerHTML = '<div class="msg-loading">正在加载...</div>';
+
+refreshLoginStatus();
+startLoginWatch();
+setTimeout(() => refreshLoginStatus({ verify: true }), 1500);
+</script>
+</body>
+</html>

@@ -130,6 +130,26 @@ body {
 }
 .icon-btn:hover { background: var(--hover); }
 
+/* 消息/动态入口上的未读数角标: 挂成图标右上角的小圆角标,数字多了显示 99+ */
+#navMsgBtn,
+#navDynamicBtn { position: relative; }
+.nav-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--pink);
+  color: var(--on-brand);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
 .search-wrap {
   position: absolute;
   left: 50%;
@@ -549,14 +569,11 @@ body {
 .nav-panel-login:hover { background: var(--pink-dark); }
 
 /* --------------------------- 窄屏:导航收窄 --------------------------- */
-/* 用户名占位较大,960px 起只留头像 */
-@media (max-width: 960px) {
+/* 用户名占位较大,1200px 起只留头像;搜索框正好在同一时机放弃居中定位,
+   改成跟着导航栏一起压缩的弹性项(否则居中的搜索框会顶到右侧图标上) */
+@media (max-width: 1200px) {
   .user-name { display: none; }
   .user-chip { padding: 4px; }
-}
-
-@media (max-width: 600px) {
-  .nav-inner { gap: 8px; padding: 10px 14px; }
   .search-wrap {
     position: relative;
     left: auto;
@@ -564,8 +581,12 @@ body {
     width: auto;
     max-width: none;
     flex: 1;
-    min-width: 0;
+    min-width: 200px;
   }
+}
+
+@media (max-width: 600px) {
+  .nav-inner { gap: 8px; padding: 10px 14px; }
   .search-box { padding-left: 12px; }
   .icon-btn { width: 32px; height: 32px; }
   .login-btn { padding: 8px 12px; }

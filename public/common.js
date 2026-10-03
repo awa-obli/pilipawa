@@ -446,15 +446,23 @@ const LOGIN_POLL_INTERVAL_MS = 2000;
 const LOGIN_WATCH_INTERVAL_MS = 60000;
 let loginPollTimer = null;
 let loginWatchTimer = null;
+// 回到前台补刷角标的监听只挂一次
+let badgeVisibilityBound = false;
 // 当前浏览器是否已登录 B 站账号。由 renderLoginSlot 维护,页面上的按钮守卫会读它
 let isUserLoggedIn = false;
+// 当前账号 uid: 动态角标的基线按它分开存,换号后不能拿别人的基线算
+let currentUid = '';
 
 function renderLoginSlot(state) {
   // 登录态的唯一出处:各页的按钮守卫与顶栏浮层都读这个变量,
   // 不能只靠实现了 onLoginStateChanged 的页面去更新它
   isUserLoggedIn = !!(state && state.loggedIn);
+  currentUid = isUserLoggedIn ? String(state.uid || '') : '';
   // 顶栏浮层跟着登录态走:刚登录、换号、退出都要丢掉旧数据
   if (window.NavPanels) window.NavPanels.syncLoginState();
+  // 消息/动态角标跟着登录态走:没登录就没得查,直接清掉
+  refreshUnreadBadge();
+  refreshDynamicBadge();
   if (typeof onLoginStateChanged === 'function') onLoginStateChanged(state);
 
   const slot = document.getElementById('loginSlot');
@@ -522,12 +530,192 @@ window.fetch = async function (...args) {
 
 // 页面切到后台时不巡检
 function startLoginWatch() {
+  // 消息/动态角标都没有推送,跟着登录态巡检的节奏一起刷新(打开会话、进动态页后由页面主动再刷一次)
+  if (!unreadWatchTimer) {
+    unreadWatchTimer = setInterval(() => {
+      if (document.hidden) return;
+      refreshUnreadBadge();
+      refreshDynamicBadge();
+    }, LOGIN_WATCH_INTERVAL_MS);
+  }
+  // 从后台切回来立刻补一次: 巡检跳过隐藏的标签页,不补就要再等一整轮
+  if (!badgeVisibilityBound) {
+    badgeVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      refreshUnreadBadge();
+      refreshDynamicBadge();
+    });
+  }
   if (loginWatchTimer) return;
   loginWatchTimer = setInterval(() => {
     if (document.hidden) return;
     refreshLoginStatus({ verify: true });
   }, LOGIN_WATCH_INTERVAL_MS);
 }
+
+/* ----------------------------- 顶栏消息角标 -----------------------------
+ * 未读数只能轮询(上游没有推送),和登录态巡检同频。未登录时不请求必然 401 的接口,
+ * 只把角标清掉;消息页在打开会话后会调 NavMessages.refresh() 即时刷新 */
+let unreadRequestSeq = 0;
+let unreadWatchTimer = null;
+// 最近一次的未读明细,消息页直接读它画各栏目角标,不用再打一次接口
+let unreadCounts = { chat: 0, reply: 0, at: 0, like: 0 };
+
+function renderUnreadBadge(count) {
+  renderNavBadge('navMsgBadge', count);
+}
+
+// 顶栏角标的统一画法(消息与动态共用): 0 就藏起来,数字多了封顶 99+
+function renderNavBadge(id, count) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
+  const n = Number(count) || 0;
+  if (n <= 0) {
+    badge.style.display = 'none';
+    badge.textContent = '';
+    return;
+  }
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.style.display = '';
+}
+
+async function refreshUnreadBadge() {
+  if (!isUserLoggedIn) {
+    unreadCounts = { chat: 0, reply: 0, at: 0, like: 0 };
+    renderUnreadBadge(0);
+    return;
+  }
+  const seq = ++unreadRequestSeq;
+  try {
+    const res = await fetch('/api/message/unread');
+    const data = await res.json();
+    // 请求期间登录态可能已经变了,过期的结果直接丢
+    if (seq !== unreadRequestSeq) return;
+    if (res.status === 401) {
+      unreadCounts = { chat: 0, reply: 0, at: 0, like: 0 };
+      renderUnreadBadge(0);
+      return;
+    }
+    unreadCounts = {
+      chat: Number(data.chat) || 0,
+      reply: Number(data.reply) || 0,
+      at: Number(data.at) || 0,
+      like: Number(data.like) || 0,
+    };
+    renderUnreadBadge(unreadCounts.chat + unreadCounts.reply + unreadCounts.at + unreadCounts.like);
+  } catch (err) {
+    // 角标拉不到不是错误,下一次巡检再试
+    console.warn('获取未读消息数失败:', err);
+  }
+}
+
+window.NavMessages = {
+  refresh: refreshUnreadBadge,
+  counts: () => unreadCounts,
+  clear: () => {
+    unreadCounts = { chat: 0, reply: 0, at: 0, like: 0 };
+    renderUnreadBadge(0);
+  },
+};
+
+/* ----------------------------- 顶栏动态角标 -----------------------------
+ * 动态没有"已读"这种上游状态: feed/all/update 只按你给的基线回答"这上面新增了几条",
+ * 基线(上次看过的最新一条动态 id)得自己记着 —— 存 localStorage,并按账号 uid 分开,
+ * 否则换个账号登录会拿上一个账号的基线算出一个错的数。
+ * 只有进 /dynamic 看到最新一页才算"看过了"(顶栏那个浮层只列投稿视频,不算) */
+const DYN_BASELINE_KEY = 'bili_dyn_baseline';
+let dynRequestSeq = 0;
+let dynCount = 0;
+// 本页是否已经试过"没基线时自动建立基线": 一个页面只试一次
+let dynInitTried = false;
+
+// 动态那颗的角标页面 HTML 里没有,这里补上(7 个页面都不用改)
+function ensureDynamicBadge() {
+  const btn = document.getElementById('navDynamicBtn');
+  if (!btn || document.getElementById('navDynBadge')) return;
+  btn.insertAdjacentHTML('beforeend', '<span class="nav-badge" id="navDynBadge" style="display:none;"></span>');
+}
+
+function readDynBaselines() {
+  try {
+    const all = JSON.parse(localStorage.getItem(DYN_BASELINE_KEY) || '{}');
+    return all && typeof all === 'object' ? all : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function getDynBaseline() {
+  if (!currentUid) return '';
+  return String(readDynBaselines()[currentUid] || '');
+}
+
+function setDynBaseline(baseline) {
+  if (!currentUid || !baseline) return;
+  const all = readDynBaselines();
+  all[currentUid] = String(baseline);
+  try {
+    localStorage.setItem(DYN_BASELINE_KEY, JSON.stringify(all));
+  } catch (err) {
+    // 无痕模式等写不进去: 角标照常算,只是不记忆
+  }
+}
+
+// 进动态页看过最新一页后调它: 记住基线并把角标立刻归零
+function markDynamicsSeen(baseline) {
+  if (!baseline) return;
+  setDynBaseline(baseline);
+  dynCount = 0;
+  renderNavBadge('navDynBadge', 0);
+}
+
+// 没进过动态页、还没有基线时: 拉一次动态列表把最新一条记成基线,免得角标要等进过动态页才开始工作。
+// 一个页面只试一次,拉不到就算了(进动态页照样会写)
+async function initDynBaseline() {
+  dynInitTried = true;
+  const uid = currentUid;
+  try {
+    const res = await fetch('/api/dynamics');
+    const data = await res.json().catch(() => ({}));
+    // 拉到一半换了账号就别往新账号头上记
+    if (res.ok && data.baseline && uid === currentUid) setDynBaseline(data.baseline);
+  } catch (err) {
+    // 拉不到就算了: 进动态页会写,下次进页面也会再试
+  }
+}
+
+async function refreshDynamicBadge() {
+  ensureDynamicBadge();
+  const baseline = isUserLoggedIn && currentUid ? getDynBaseline() : '';
+  if (!baseline) {
+    // 还没基线: 自动建一次(这一次不报数),之后这个页面就只读不写了
+    if (isUserLoggedIn && currentUid && !dynInitTried) initDynBaseline();
+    dynCount = 0;
+    renderNavBadge('navDynBadge', 0);
+    return;
+  }
+
+  const seq = ++dynRequestSeq;
+  try {
+    const res = await fetch(`/api/dynamics/update?baseline=${encodeURIComponent(baseline)}`);
+    const data = await res.json().catch(() => ({}));
+    // 请求期间登录态可能已经变了,过期的结果直接丢
+    if (seq !== dynRequestSeq) return;
+    if (!res.ok) throw new Error(data.message || '检查新动态失败');
+    dynCount = Number(data.updateNum) || 0;
+    renderNavBadge('navDynBadge', dynCount);
+  } catch (err) {
+    // 角标拉不到不是错误,下一次巡检再试
+    console.warn('获取新动态数量失败:', err);
+  }
+}
+
+window.NavDynamics = {
+  refresh: refreshDynamicBadge,
+  seen: markDynamicsSeen,
+  count: () => dynCount,
+};
 
 function openLoginModal() {
   document.getElementById('loginModalMask').style.display = 'flex';

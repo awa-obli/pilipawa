@@ -15,6 +15,7 @@
 - **动态**：关注动态流
 - **播放**：画中画、截图、倍速、全屏、多清晰度切换、分 P、弹幕、评论、表情 / @ / 图片评论、点赞 / 投币 / 收藏、播放心跳
 - **个人主页**：资料卡、投稿、历史记录、收藏夹管理、关注 / 粉丝列表
+- **消息**：我的消息、回复我的、@我的、收到的赞
 - **设置**：一键切换深色主题
 
 ## 环境要求
@@ -41,6 +42,7 @@ public/
   dynamic.html         动态页：关注动态流
   player.html          播放页：播放器 / 弹幕 / 评论 / 点赞投币收藏
   account.html         个人主页：资料卡 / 投稿 / 历史 / 收藏夹 / 关注粉丝
+  message.html         消息中心：我的消息 / 回复我的 / @我的 / 收到的赞
   settings.html        设置页：外观（深色主题）
   common.css           公共样式与主题变量
   common.js            顶部导航、搜索历史与建议、扫码登录
@@ -50,18 +52,19 @@ data/sessions.json     登录会话持久化（自动创建，明文，见下）
 
 ## 页面与接口
 
-页面路由：`/`（首页）、`/search`、`/dynamic`、`/player`、`/account`、`/settings`。
+页面路由：`/`（首页）、`/search`、`/dynamic`、`/player`、`/account`、`/message`、`/settings`。
 
 接口按模块分组，全部由服务端转发，前端不直连 B 站：
 
 | 分组 | 接口 |
 |---|---|
 | 登录 | `/api/login/qrcode`<br>`/api/login/poll`<br>`/api/login/status`<br>`/api/login/logout` |
-| 个人主页 | `/api/account/profile`<br>`/api/account/history`<br>`/api/account/favorites`<br>`/api/account/favorites/:mediaId`<br>`/api/account/favorites/remove`<br>`/api/account/favorites/transfer`<br>`/api/account/favorites/create`<br>`/api/account/favorites/edit`<br>`/api/account/favorites/delete`<br>`/api/account/followings`<br>`/api/account/followers` |
+| 个人主页 | `/api/account/profile`<br>`/api/account/history`<br>`/api/account/favorites`<br>`/api/account/favorites/:mediaId`<br>`/api/account/favorites/remove`<br>`/api/account/favorites/transfer`<br>`/api/account/favorites/create`<br>`/api/account/favorites/edit`<br>`/api/account/favorites/delete`<br>`/api/account/history/delete`<br>`/api/account/followings`<br>`/api/account/followers` |
 | 搜索与推荐 | `/api/search`<br>`/api/suggest`<br>`/api/recommend` |
-| 动态 | `/api/dynamics`<br>`/api/action/dynamic-like` |
+| 动态 | `/api/dynamics`<br>`/api/dynamics/update`<br>`/api/action/dynamic-like` |
+| 消息 | `/api/message/unread`<br>`/api/message/feed`<br>`/api/message/sessions`<br>`/api/message/history`<br>`/api/message/read`<br>`/api/message/send` |
 | 播放 | `/api/info`<br>`/api/play`<br>`/api/related`<br>`/api/up/info`<br>`/api/space/videos` |
-| 弹幕与评论 | `/api/danmaku`<br>`/api/reply`<br>`/api/reply/replies`<br>`/api/reply/add`<br>`/api/reply/like`<br>`/api/reply/at`<br>`/api/reply/upload`<br>`/api/reply/del`<br>`/api/emote/panel` |
+| 弹幕与评论 | `/api/danmaku`<br>`/api/danmaku/send`<br>`/api/reply`<br>`/api/reply/replies`<br>`/api/reply/add`<br>`/api/reply/like`<br>`/api/reply/at`<br>`/api/reply/upload`<br>`/api/reply/del`<br>`/api/emote/panel` |
 | 互动 | `/api/action/like`<br>`/api/action/coin`<br>`/api/action/favorite`<br>`/api/action/heartbeat`<br>`/api/action/status`<br>`/api/up/follow` |
 
 ## 安全提示

@@ -1,8 +1,6 @@
 // B 站搜索 + 播放 一体化代理服务: 一个进程、一个端口同时提供页面与 API。
-// 页面: / 首页、/search 搜索、/player 播放、/dynamic 动态、/account 个人主页、/settings 设置
-// 接口: /api/search /api/suggest /api/play /api/info /api/related /api/danmaku
-//       /api/reply* /api/emote/panel /api/recommend /api/up/* /api/space/videos
-//       /api/dynamics /api/account/* /api/action/* /api/login/*
+// 页面: / 首页、/search 搜索、/player 播放、/dynamic 动态、/account 个人主页、/message 消息、/settings 设置
+// 接口清单见 README.md 的「页面与接口」
 //
 // B 站接口会校验 Referer / User-Agent,并要求匿名 buvid3 cookie,否则返回 412,
 // 所以统一由服务端转发,匿名 cookie 全局共用一份并缓存。
@@ -2054,6 +2052,17 @@ function normalizeImgUrl(raw) {
   return s.replace(/^http:\/\//i, "https://");
 }
 
+// 上游给的资源地址必须还原成 http(s): "//host/x" 补成 https 后也要再确认一次,
+// 否则 javascript: 、data:text/html 这类协议会原样漏到前端的 href/src 里。
+// data: 只放行图片(前端自己那个 1x1 透明占位图)
+function normalizeResourceUrl(raw) {
+  const url = normalizeImgUrl(raw);
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  if (/^data:image\/(png|jpe?g|gif|webp|bmp)[;,]/i.test(url)) return url;
+  return "";
+}
+
 // 评论正文里的表情(表情转义符 → 图片): 上游把用到的表情放在 content.emote,
 // key 是正文里的占位符(形如 "[doge]"),值为 { text, url, meta.size };
 // 个别新结构是 content.emoji 数组,两种都兼容。动图表情只有 gif_url 是全动态的,优先取。
@@ -2627,12 +2636,15 @@ app.post("/api/reply/del", async (req, res) => {
   }
 });
 
-/* ----------------------------- 评论表情面板 -----------------------------
- * 数据源: x/emote/user/panel/web,business=reply。带登录 Cookie 才能拿到该账号的
- * 会员/已购买表情包,所以要求登录。
+/* ----------------------------- 表情面板 -----------------------------
+ * 数据源: x/emote/user/panel/web。带登录 Cookie 才能拿到该账号的
+ * 会员/已购买表情包,所以要求登录。business 由调用方给: 评论区 reply、私信 im。
  * url 非空 = 图片表情;url 为空 = 颜文字包(其 url 字段就是那段字符,前端按纯文本渲染)。
  * size 是包的表情尺寸(1 小 2 大),前端据此决定一行放几个。
  * -------------------------------------------------------------------- */
+
+// 上游按使用场景分发不同的表情包,只放行认得的几个值
+const EMOTE_BUSINESSES = ["reply", "im", "dynamic"];
 
 app.get("/api/emote/panel", async (req, res) => {
   const session = requireLogin(req, res);
@@ -2640,8 +2652,11 @@ app.get("/api/emote/panel", async (req, res) => {
 
   try {
     const cookie = await getUpstreamCookie(req);
+    const business = EMOTE_BUSINESSES.includes(String(req.query.business))
+      ? String(req.query.business)
+      : "reply";
     const url = new URL("https://api.bilibili.com/x/emote/user/panel/web");
-    url.searchParams.set("business", "reply");
+    url.searchParams.set("business", business);
 
     const biliRes = await fetchWithTimeout(url.toString(), {
       headers: { ...COMMON_HEADERS, Cookie: cookie },
@@ -3652,6 +3667,8 @@ app.get("/api/action/status", async (req, res) => {
  * -------------------------------------------------------------------- */
 
 const DYNAMIC_UPSTREAM = "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all";
+// 只回一个数量的"有没有新动态"接口(顶栏动态角标用它,比拉一整页动态轻得多)
+const DYNAMIC_UPDATE_UPSTREAM = "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all/update";
 const DYNAMIC_MAX_IMAGES = 9; // 和网页端一致: 九宫格,超出只标注张数
 
 // 动态接口的错误码翻译,和 spaceErrorText 同一套口径,只是没有"用户不存在"这类分支
@@ -3951,12 +3968,56 @@ app.get("/api/dynamics", async (req, res) => {
 
     const list = (data.data?.items || []).map(mapDynamic).filter(Boolean);
     const nextOffset = data.data?.offset || "";
+    // 更新基线: 拿它当"我看到哪儿了",下次问上游"这上面又多了几条"。
+    // 上游给的就是字符串形态的动态 id;取不到时退回这一页第一条(mapDynamic 里存的是 id_str)
+    const rawBaseline = String(data.data?.update_baseline || "");
+    const baseline = /^\d{1,25}$/.test(rawBaseline) ? rawBaseline : String((list[0] && list[0].id) || "");
     return res.json({
       code: 0,
       list,
+      baseline,
       hasMore: !!data.data?.has_more && !!nextOffset && nextOffset !== offset,
       offset: nextOffset,
     });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* 动态有没有新的: 只回一个数量。上游要客户端带上"上次看到的第一条动态 id"
+ * (update_baseline),基线由前端记着(见 common.js 的 NavDynamics) */
+app.get("/api/dynamics/update", async (req, res) => {
+  // 基线是动态 id: 只放行数字,别把查询串原样透传给上游(参数校验放在 requireLogin 之前)
+  const baseline = String((req.query && req.query.baseline) || "").trim();
+  if (baseline && !/^\d{1,25}$/.test(baseline)) {
+    return res.status(400).json({ code: 1, message: "baseline 参数不合法" });
+  }
+
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+    const url = new URL(DYNAMIC_UPDATE_UPSTREAM);
+    url.searchParams.set("type", "all");
+    if (baseline) url.searchParams.set("update_baseline", baseline);
+
+    const biliRes = await fetchWithTimeout(url.toString(), {
+      headers: { ...COMMON_HEADERS, Cookie: cookie },
+    });
+    const data = await upstreamJson(biliRes, "新动态检测");
+
+    if (data.code === -101) {
+      dropSession(req.sessionId, session, "上游判定未登录(UPSTREAM_NOT_LOGIN)");
+      return sendLoginExpired(res);
+    }
+    if (data.code !== 0) {
+      return res.status(400).json({ code: 1, message: dynamicErrorText(data.code, "检查新动态失败,请稍后重试") });
+    }
+
+    res.json({ code: 0, updateNum: Number(data.data && data.data.update_num) || 0 });
   } catch (err) {
     console.error(err);
     const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
@@ -4006,6 +4067,596 @@ app.post("/api/action/dynamic-like", async (req, res) => {
   }
 });
 
+/* ----------------------------- 消息中心 -----------------------------
+ * 两块数据: 通知流(x/msgfeed/*,api.bilibili.com)与私信(api.vc.bilibili.com)。
+ * 通知流的字段官方清单只写了"回复我的",@我 / 收到的赞 没有清单,
+ * 这里按上游实际返回的几种形态做容错取值,取不到就留空由前端降级。
+ * 会话/消息里的时间戳有秒级也有微秒级,统一换算成秒再给前端。
+ * -------------------------------------------------------------------- */
+
+const MESSAGE_MAX_BYTES = 2000; // 上游对 msg[content] 的上限是 2000 字节
+
+// 会话列表用的 session_type: 4 = 所有私信会话。
+// 上游的 7(系统通知)只有分类壳子、talker_id 恒为 0 且取不到消息记录(正文也不给),
+// 所以这一版不做系统通知栏
+const MESSAGE_SESSION_TYPE = 4;
+
+// 随机 UUID v4,私信发送的 msg[dev_id] 用它(和浏览器指纹 _uuid 不是一回事)
+function buildDevId() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+// 微秒级时间戳(会话/已读时间都是这个精度)换算成秒;小于 1e12 的值当秒用
+function toUnixSeconds(raw) {
+  const n = Number(raw) || 0;
+  return n > 1e12 ? Math.floor(n / 1e6) : n;
+}
+
+function messageErrorText(code, fallback) {
+  if (code === -101) return LOGIN_EXPIRED_MESSAGE;
+  if (code === -352 || code === -799 || code === 412) return "加载失败,请稍后重试";
+  return fallback || "加载失败,请稍后重试";
+}
+
+// 私信里给出去的图片/链接地址统一走 normalizeResourceUrl,别直接用 normalizeImgUrl
+
+// 私信正文: 1 文字 / 2 图片 / 5 撤回 / 18 系统提示,其余(通知、视频推送、分享、粉丝团)
+// 统一按"标题 + 正文 + 跳转"的卡片给出去,完全认不出的类型才由前端出占位
+function mapMessageContent(msgType, content) {
+  let obj = null;
+  try {
+    obj = JSON.parse(content);
+  } catch {
+    return { type: "text", text: String(content == null ? "" : content) };
+  }
+  const type = Number(msgType) || 0;
+
+  if (type === 1) return { type: "text", text: messageText(obj) };
+  if (type === 2) {
+    const url = normalizeResourceUrl(obj && obj.url);
+    if (!url) return { type: "other" };
+    return { type: "image", url, width: Number(obj.width) || 0, height: Number(obj.height) || 0 };
+  }
+  if (type === 5) return { type: "revoke" };
+  // msg_type 18 是"对方主动回复或关注你前,最多发送1条消息"这类系统提示,
+  // 发送者是自己但不是自己发的内容,前端按居中提示画,不算聊天消息
+  if (type === 18) {
+    const text = richTextPieces(messageText(obj));
+    return text ? { type: "card", system: true, text } : { type: "other" };
+  }
+
+  // msg_type 10/11/12/13 这类通知与推送: modules 是几行"字段 + 值"的补充说明。
+  // 字段名大小写上游不统一(通知类给 Title/Text,推送类给 title/desc),逐个试
+  const modules = Array.isArray(obj && obj.modules)
+    ? obj.modules
+        .map((m) => ({ title: singleLineText((m && m.title) || ""), detail: singleLineText((m && m.detail) || "") }))
+        .filter((m) => m.title || m.detail)
+    : [];
+  const text = singleLineText(messageText({ content: (obj && (obj.Text || obj.text)) || "" }));
+  const title = singleLineText(
+    messageText({
+      content: (obj && (obj.Title || obj.title || obj.headline || obj.name || obj.desc || obj.Content || obj.content)) || "",
+    })
+  );
+  const cover = normalizeResourceUrl(obj && (obj.cover || obj.thumb || obj.image_url || obj.cover_url));
+  // jump_uri 才是字符串地址,带 _config 的那几个是对象,不能直接当 URL 用;非 http(s) 一律丢掉
+  const channel = safeJumpUrl(obj && typeof obj.jump_uri === "string" ? obj.jump_uri : "");
+  if (!title && !text && !cover && !modules.length && !channel) return { type: "other" };
+  return {
+    type: "card",
+    title,
+    text,
+    cover,
+    modules,
+    channel,
+  };
+}
+
+// 从 content 对象里取可显示的文字。字段名大小写上游不统一: 普通文字消息给
+// {"content":"文字"},系统/公告类给 {"Content":"《哔哩哔哩隐私政策》修订通知"},
+// 提示类给 {"content":"[{\"text\":\"…\"}]"},统一还原成一句话
+function messageText(obj) {
+  if (!obj || typeof obj !== "object") return "";
+  let value = null;
+  for (const key of ["Content", "content", "Text", "text"]) {
+    if (obj[key] != null) {
+      value = obj[key];
+      break;
+    }
+  }
+  if (typeof value === "string") return richTextPieces(value);
+  // 个别形态把正文再包一层,继续往里取
+  return value && typeof value === "object" ? messageText(value) : "";
+}
+
+// 提示类消息的正文是一个 JSON 数组字符串(元素里带 text),取文字拼成一句
+function richTextPieces(raw) {
+  if (typeof raw !== "string") return "";
+  const text = raw.trim();
+  if (text[0] !== "[") return raw;
+  try {
+    const list = JSON.parse(text);
+    if (!Array.isArray(list)) return raw;
+    return list.map((piece) => (piece && piece.text) || "").join("");
+  } catch {
+    return raw;
+  }
+}
+
+// 会话列表里那一行预览: 非文字消息给一句人能看懂的占位
+function mapMessagePreview(msgType, content, status) {
+  // 被撤回的消息上游照样把正文给出来,列表这一行不能跟着显示原文
+  if (Number(status) === 1 || Number(status) === 2) return "[消息已撤回]";
+  const parsed = mapMessageContent(msgType, content);
+  if (parsed.type === "text") return singleLineText(parsed.text).slice(0, 60);
+  if (parsed.type === "image") return "[图片]";
+  if (parsed.type === "revoke") return "[消息已撤回]";
+  // 卡片优先给正文(视频推送/登录通知都是正文更有信息量),没有正文再退回标题
+  if (parsed.type === "card") return singleLineText(parsed.text || parsed.title).slice(0, 60) || "[消息]";
+  const type = Number(msgType) || 0;
+  if (type === 3) return "[视频]";
+  if (type === 4) return "[专栏]";
+  if (type === 6) return "[表情]";
+  return "[消息]";
+}
+
+// 一条私信 → 前端模型。isMine 用当前账号 mid 比对,雪花序列号按字符串传。
+// status 是上游的 msg_status: 1=被撤回(上游照样把正文给出来,取不取用只能看它)、2=被系统撤回
+function mapMessageItem(msg, myMid) {
+  const senderUid = String((msg && msg.sender_uid) || "");
+  return {
+    senderUid,
+    isMine: !!myMid && senderUid === String(myMid),
+    status: Number(msg && msg.msg_status) || 0,
+    seqno: String((msg && msg.msg_seqno) || ""),
+    timestamp: Number(msg && msg.timestamp) || 0,
+    ...mapMessageContent(msg && msg.msg_type, msg && msg.content),
+  };
+}
+
+// 会话消息是否还有更早的: 上游的 has_more 单独看不可靠(已经翻到最早一页也可能回 1),
+// 所以再拿 min_seqno 跟本次请求的游标比一比,确认这一页真的往前动了
+function messageHasMore(body, beginSeqno) {
+  if (Number(body.has_more) !== 1) return false;
+  const min = String(body.min_seqno || "");
+  if (!min) return false;
+  if (!beginSeqno) return true;
+  return min !== beginSeqno;
+}
+
+// 会话 → 前端模型。用户会话补资料卡,系统会话用上游给的 account_info,都没有就退回 mid
+function mapMessageSession(row, card) {
+  const account = (row && row.account_info) || null;
+  const lastMsg = (row && row.last_msg) || {};
+  const type = Number(row && row.session_type) || 1;
+  const talkerId = String((row && row.talker_id) || "");
+  return {
+    key: talkerId,
+    talkerId,
+    sessionType: type,
+    uname: (card && card.uname) || (account && account.name) || (row && row.group_name) || `用户${row.talker_id}`,
+    face: (card && card.face) || normalizeResourceUrl((account && account.pic_url) || (row && row.group_cover)),
+    unreadCount: Number(row && row.unread_count) || 0,
+    ackSeqno: String((row && row.ack_seqno) || ""),
+    lastTime: toUnixSeconds(lastMsg.timestamp || row.session_ts),
+    // 最近一条消息的序列号: 前端靠它判断这条会话有没有新消息(秒级的 lastTime 不够)
+    lastSeqno: String((row && row.max_seqno) || ""),
+    preview: mapMessagePreview(lastMsg.msg_type, lastMsg.content, lastMsg.msg_status),
+  };
+}
+
+// 拉一页会话列表: session_type 4 = 我的消息(所有私信会话)
+async function fetchMessageSessions(sessionType, cookie) {
+  const url = new URL("https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions");
+  url.searchParams.set("session_type", String(sessionType));
+  // 粉丝团折叠,未关注人会话不折叠
+  url.searchParams.set("group_fold", "1");
+  url.searchParams.set("unfollow_fold", "0");
+  url.searchParams.set("sort_rule", "2");
+  url.searchParams.set("size", "20");
+  url.searchParams.set("build", "0");
+  url.searchParams.set("mobi_app", "web");
+
+  const r = await fetchWithTimeout(url.toString(), { headers: { ...COMMON_HEADERS, Cookie: cookie } });
+  const data = await upstreamJson(r, "会话列表接口");
+  if (data.code !== 0) {
+    throw Object.assign(new Error(messageErrorText(data.code, "加载会话列表失败,请稍后重试")), {
+      code: data.code,
+      upstreamMessage: data.message,
+    });
+  }
+  const rows = (data.data && data.data.session_list) || [];
+  // 系统会话自带 account_info,不必再查资料卡
+  const cards = await fillUserCards(
+    rows.filter((row) => !(row.account_info && row.account_info.name)).map((row) => row.talker_id),
+    cookie
+  );
+  return {
+    list: rows.map((row) => mapMessageSession(row, cards.get(String(row.talker_id)))),
+    hasMore: Number(data.data && data.data.has_more) === 1,
+  };
+}
+
+// 通知流条目: 三个接口结构接近但不一致,按"哪个字段有就用哪个"取
+function mapFeedItem(row) {
+  const user = (row && (row.user || row.up_action_text_user)) || (row && row.users && row.users[0]) || {};
+  const item = (row && row.item) || {};
+  const users = (row && row.users) || [];
+  const uri = String(item.uri || "");
+  const pic = (item.pictures && item.pictures[0] && item.pictures[0].img_src) ||
+    item.image ||
+    item.item_pic ||
+    item.cover ||
+    "";
+  const content = item.source_content || item.target_reply_content || item.content || item.item_name || item.title || "";
+  return {
+    id: String((row && row.id) || ""),
+    actorMid: String(user.mid || user.uid || (row && row.uid) || ""),
+    actorName: singleLineText(user.nickname || user.uname || (row && row.nickname) || ""),
+    actorFace: normalizeImgUrl(user.avatar || user.face || ""),
+    // 点赞通知没有逐条文案,多人点赞时前端用"等 N 人赞了"兜底
+    actionText: singleLineText(item.title_prefix || (row && row.reply_type_desc) || ""),
+    likeCount: users.length || 0,
+    content: singleLineText(content),
+    thumb: normalizeImgUrl(pic),
+    time: Number((row && (row.reply_time || row.at_time || row.like_time || row.time)) || 0),
+    uri,
+    bvid: String(item.bvid || (uri.match(/BV[0-9a-zA-Z]{10}/) || [""])[0] || ""),
+    rpid: String(item.target_reply_id || (row && row.id) || ""),
+  };
+}
+
+// 单个用户资料卡(会话列表按 talker_id 补昵称头像),10 分钟缓存,
+// 走 card 接口而不是 space 系列: 后者要 WBI 签名 + 设备指纹,一屏 20 个会话会白打 20 次
+const USER_CARD_TTL_MS = 10 * 60 * 1000;
+const userCardCache = new Map();
+
+async function fetchUserCard(mid, cookie) {
+  const key = String(mid || "");
+  if (!key) return null;
+  const hit = userCardCache.get(key);
+  if (hit && Date.now() - hit.at < USER_CARD_TTL_MS) return hit.card;
+
+  let card = null;
+  try {
+    const url = new URL("https://api.bilibili.com/x/web-interface/card");
+    url.searchParams.set("mid", key);
+    url.searchParams.set("photo", "false");
+    const r = await fetchWithTimeout(url.toString(), { headers: { ...COMMON_HEADERS, Cookie: cookie } });
+    const data = await upstreamJson(r, "用户名片接口");
+    if (data.code === 0 && data.data && data.data.card) {
+      card = {
+        uname: singleLineText(data.data.card.name || ""),
+        face: normalizeResourceUrl(data.data.card.face),
+      };
+    }
+  } catch {
+    // 补不到就退回 mid,不让一个会话的资料失败拖垮整张列表
+  }
+  if (card) userCardCache.set(key, { card, at: Date.now() });
+  return card;
+}
+
+// 有限并发的批量取资料卡: 会话列表一次最多补 20 个,不能同时打满
+async function fillUserCards(mids, cookie, limit = 6) {
+  const out = new Map();
+  const queue = [...new Set(mids.filter(Boolean))];
+  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) {
+      const mid = queue.shift();
+      const card = await fetchUserCard(mid, cookie);
+      if (card) out.set(String(mid), card);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/* 未读汇总: 通知流未读 + 私信未读 */
+app.get("/api/message/unread", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+    const [feedRes, sessionRes] = await Promise.all([
+      fetchWithTimeout("https://api.bilibili.com/x/msgfeed/unread", {
+        headers: { ...COMMON_HEADERS, Cookie: cookie },
+      }),
+      fetchWithTimeout("https://api.vc.bilibili.com/session_svr/v1/session_svr/single_unread", {
+        headers: { ...COMMON_HEADERS, Cookie: cookie },
+      }),
+    ]);
+    const feed = await feedRes.json();
+    const sess = await sessionRes.json();
+
+    if (feed.code === -101 || sess.code === -101) {
+      dropSession(req.sessionId, session, "上游判定未登录(UPSTREAM_NOT_LOGIN)");
+      return sendLoginExpired(res);
+    }
+
+    const f = feed.code === 0 ? feed.data || {} : {};
+    const s = sess.code === 0 ? sess.data || {} : {};
+    res.json({
+      code: 0,
+      // 回复与 @ 上游分列,recv_reply 是合并值,取不到再自己加
+      reply: Number(f.recv_reply) || (Number(f.reply) || 0) + (Number(f.at) || 0),
+      at: Number(f.at) || 0,
+      like: Number(f.recv_like) || Number(f.like) || 0,
+      chat: (Number(s.follow_unread) || 0) + (Number(s.unfollow_unread) || 0) + (Number(s.dustbin_unread) || 0),
+    });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* 通知流: 回复我的 / @我的 / 收到的赞。
+ * 三个接口都要 WBI 签名,翻页游标是上一页最后一条的 id(0 表示第一页);
+ * items 可能挂在 data 下,也可能挂在 data.total 下,两种都认 */
+const MESSAGE_FEEDS = {
+  reply: "https://api.bilibili.com/x/msgfeed/reply",
+  at: "https://api.bilibili.com/x/msgfeed/at",
+  like: "https://api.bilibili.com/x/msgfeed/like",
+};
+
+app.get("/api/message/feed", async (req, res) => {
+  const type = (req.query && req.query.type) || "reply";
+  const upstream = MESSAGE_FEEDS[type];
+  if (!upstream) return res.status(400).json({ code: 1, message: "不支持的消息类型" });
+
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  // 游标是上一页的 id,只做长度与类型防护
+  const cursorRaw = String((req.query && req.query.cursor) || "").trim();
+  const cursor = /^\d{1,20}$/.test(cursorRaw) ? cursorRaw : "0";
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+    const signed = await signWbiParams({ id: cursor, build: "0", mobi_app: "web" });
+    const target = new URL(upstream);
+    Object.entries(signed).forEach(([k, v]) => target.searchParams.set(k, String(v)));
+
+    const r = await fetchWithTimeout(target.toString(), { headers: { ...COMMON_HEADERS, Cookie: cookie } });
+    const data = await upstreamJson(r, "消息通知接口");
+
+    if (data.code === -101) {
+      dropSession(req.sessionId, session, "上游判定未登录(UPSTREAM_NOT_LOGIN)");
+      return sendLoginExpired(res);
+    }
+    if (data.code !== 0) {
+      return res.status(400).json({ code: 1, message: messageErrorText(data.code, "加载消息失败,请稍后重试") });
+    }
+
+    const body = data.data || {};
+    const rows = body.items || (body.total && body.total.items) || [];
+    const srcCursor = body.cursor || (body.total && body.total.cursor) || {};
+    const next = String(srcCursor.id || "");
+    res.json({
+      code: 0,
+      list: rows.map(mapFeedItem).filter(Boolean),
+      hasMore: !srcCursor.is_end && !!next && next !== cursor,
+      cursor: next,
+    });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* 会话列表: 我的消息(上游 session_type 4,所有私信会话)。
+ * 上游对 session_type 1/2/4 返回的是同一份列表,已经不再按关注与否分栏 */
+app.get("/api/message/sessions", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+    const page = await fetchMessageSessions(MESSAGE_SESSION_TYPE, cookie);
+    res.json({ code: 0, list: page.list, hasMore: page.hasMore });
+  } catch (err) {
+    if (err.code === -101) {
+      dropSession(req.sessionId, session, "上游判定未登录(UPSTREAM_NOT_LOGIN)");
+      return sendLoginExpired(res);
+    }
+    console.error(err);
+    // 会话列表的业务错误(如参数被拒)已经在 fetchMessageSessions 里翻成文案了
+    const { status, message } = err.upstreamMessage
+      ? { status: 400, message: err.message }
+      : buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* 会话消息记录: 默认最近 30 条,begin_seqno 往前翻更早的(session_type 固定为 1) */
+const MESSAGE_PAGE_SIZE = 30;
+
+app.get("/api/message/history", async (req, res) => {
+  const talkerRaw = String((req.query && req.query.talker_id) || "").trim();
+  if (!/^\d{1,20}$/.test(talkerRaw)) {
+    return res.status(400).json({ code: 1, message: "缺少 talker_id 参数" });
+  }
+  const beginRaw = String((req.query && req.query.begin_seqno) || "").trim();
+  const beginSeqno = /^\d{1,20}$/.test(beginRaw) ? beginRaw : "";
+
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+    const url = new URL("https://api.vc.bilibili.com/svr_sync/v1/svr_sync/fetch_session_msgs");
+    url.searchParams.set("talker_id", talkerRaw);
+    url.searchParams.set("session_type", "1");
+    url.searchParams.set("size", String(MESSAGE_PAGE_SIZE));
+    if (beginSeqno) url.searchParams.set("begin_seqno", beginSeqno);
+    url.searchParams.set("build", "0");
+    // mobi_app=web 才会返回新版表情包名(老表情包名上游会自动转换)
+    url.searchParams.set("mobi_app", "web");
+
+    const r = await fetchWithTimeout(url.toString(), { headers: { ...COMMON_HEADERS, Cookie: cookie } });
+    const data = await upstreamJson(r, "消息记录接口");
+
+    if (data.code === -101) {
+      dropSession(req.sessionId, session, "上游判定未登录(UPSTREAM_NOT_LOGIN)");
+      return sendLoginExpired(res);
+    }
+    if (data.code !== 0) {
+      return res.status(400).json({ code: 1, message: messageErrorText(data.code, "加载消息记录失败,请稍后重试") });
+    }
+
+    const body = data.data || {};
+    const myMid = session.mid || session.dedeUserId || null;
+    // 上游按时间倒序给,反转成"早→晚"方便前端从下往上排。
+    // msg_type=5 是"撤回"这条控制消息(正文只带被撤回那条的 msg_key),不画进聊天流;
+    // 被撤回的那条自己会带着 msg_status=1 回来,前端按它把正文换成提示
+    // (msg_key 是 19 位,JSON.parse 后精度已经丢了,不能拿它去对应两条消息)
+    const list = (body.messages || [])
+      .filter((msg) => Number(msg && msg.msg_type) !== 5)
+      .map((msg) => mapMessageItem(msg, myMid))
+      .reverse();
+    res.json({
+      code: 0,
+      list,
+      hasMore: messageHasMore(body, beginSeqno),
+      minSeqno: String(body.min_seqno || ""),
+    });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* 把会话标为已读(打开会话时调一次,不然后台的未读数一直挂着) */
+app.post("/api/message/read", async (req, res) => {
+  const body = req.body || {};
+  const talkerRaw = String(body.talkerId || "").trim();
+  if (!/^[1-9]\d{0,19}$/.test(talkerRaw)) {
+    return res.status(400).json({ code: 1, message: "缺少会话 id" });
+  }
+  const ackRaw = String(body.ackSeqno || "").trim();
+  const ackSeqno = /^\d{1,20}$/.test(ackRaw) ? ackRaw : "";
+
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+    const form = new URLSearchParams({
+      talker_id: talkerRaw,
+      session_type: "1",
+      csrf: session.biliJct || "",
+      csrf_token: session.biliJct || "",
+      build: "0",
+      mobi_app: "web",
+    });
+    // 留空表示"最新的消息",拿不到 ack_seqno 时就别传
+    if (ackSeqno) form.set("ack_seqno", ackSeqno);
+
+    const biliRes = await fetchWithTimeout(
+      "https://api.vc.bilibili.com/session_svr/v1/session_svr/update_ack",
+      {
+        method: "POST",
+        headers: writeHeaders(cookie, "https://message.bilibili.com/"),
+        body: form,
+      }
+    );
+    const data = await upstreamJson(biliRes, "会话已读接口");
+
+    if (replyIfUnauthorized(req, res, data)) return;
+    if (data.code !== 0) {
+      return res.status(400).json({ code: 1, message: messageErrorText(data.code, "设置已读失败") });
+    }
+    res.json({ code: 0 });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* 发送私信(只发文字与图片,对应上游 msg_type 1 / 2) */
+app.post("/api/message/send", async (req, res) => {
+  const body = req.body || {};
+  const receiverRaw = String(body.talkerId || "").trim();
+  if (!/^\d{1,20}$/.test(receiverRaw)) {
+    return res.status(400).json({ code: 1, message: "缺少会话 id" });
+  }
+  const text = String(body.content || "").trim();
+  const imageUrl = String(body.imageUrl || "").trim();
+  let content;
+  if (imageUrl) {
+    content = {
+      url: imageUrl,
+      width: Number(body.imageWidth) || 0,
+      height: Number(body.imageHeight) || 0,
+    };
+  } else {
+    if (!text) return res.status(400).json({ code: 1, message: "消息内容不能为空" });
+    if (Buffer.byteLength(text, "utf-8") > MESSAGE_MAX_BYTES) {
+      return res.status(400).json({ code: 1, message: "消息内容过长" });
+    }
+    content = { content: text };
+  }
+
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  // 发送者必须是自己的 mid: 会话里存的是 DedeUserID,缺了没法发
+  const myMid = session.dedeUserId || session.mid;
+  if (!myMid) return sendLoginExpired(res);
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+    const devId = buildDevId();
+    const form = new URLSearchParams({
+      "msg[sender_uid]": String(myMid),
+      "msg[receiver_id]": receiverRaw,
+      "msg[receiver_type]": "1",
+      "msg[msg_type]": imageUrl ? "2" : "1",
+      "msg[msg_status]": "0",
+      "msg[dev_id]": devId,
+      "msg[timestamp]": String(Math.floor(Date.now() / 1000)),
+      "msg[content]": JSON.stringify(content),
+      csrf: session.biliJct || "",
+      csrf_token: session.biliJct || "",
+    });
+
+    // 该接口要 WBI 签名,不签容易被当成非浏览器请求
+    const signed = await signWbiParams({
+      w_sender_uid: String(myMid),
+      w_receiver_id: receiverRaw,
+      w_dev_id: devId,
+    });
+    const target = new URL("https://api.vc.bilibili.com/web_im/v1/web_im/send_msg");
+    Object.entries(signed).forEach(([k, v]) => target.searchParams.set(k, String(v)));
+
+    const biliRes = await fetchWithTimeout(target.toString(), {
+      method: "POST",
+      headers: writeHeaders(cookie, "https://message.bilibili.com/"),
+      body: form,
+    });
+    const data = await upstreamJson(biliRes, "发送私信接口");
+
+    if (replyIfUnauthorized(req, res, data)) return;
+    if (data.code !== 0) {
+      // 频率限制、对方隐私设置、未关注只能发一条这类提示要让用户看到原文
+      return res.status(400).json({ code: 1, message: data.message || data.msg || "发送失败,请稍后重试" });
+    }
+    res.json({ code: 0, msgKey: String((data.data && data.data.msg_key) || "") });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
 /* ----------------------------- 静态页面路由 ----------------------------- */
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -4033,12 +4684,17 @@ app.get("/settings", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "settings.html"));
 });
 
+app.get("/message", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "message.html"));
+});
+
 app.listen(PORT, () => {
   console.log(`服务已启动: http://localhost:${PORT}`);
   console.log(`  首页: http://localhost:${PORT}/`);
-  console.log(`  搜索结果页: http://localhost:${PORT}/search`);
+  console.log(`  搜索页: http://localhost:${PORT}/search`);
   console.log(`  播放页: http://localhost:${PORT}/player`);
-  console.log(`  动态页: http://localhost:${PORT}/dynamic`);
   console.log(`  个人主页: http://localhost:${PORT}/account`);
+  console.log(`  动态页: http://localhost:${PORT}/dynamic`);
+  console.log(`  消息页: http://localhost:${PORT}/message`);
   console.log(`  设置页: http://localhost:${PORT}/settings`);
 });
