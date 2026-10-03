@@ -870,23 +870,7 @@ let dynamicLoaded = false; // 是否成功拉到过第一页
 let dynamicError = '';
 let nearBottom = false;
 
-function esc(str) {
-  return String(str == null ? '' : str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// 动态标题里没有搜索高亮那种可信 HTML,去标签只为了塞进 title 属性
-function plainText(str) {
-  return String(str == null ? '' : str).replace(/<[^>]*>/g, '');
-}
-
-// 表情名/昵称要拼进正则里当字面量,特殊字符必须转义
-function escapeRegExp(str) {
-  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+// esc / plainText / escapeRegExp 统一由 common.js 提供:
 
 function formatCount(n) {
   const num = Number(n) || 0;
@@ -901,7 +885,7 @@ function imgErrorAttr() {
 }
 
 function imageHTML(img, extraAttrs) {
-  return `<img src="${esc(img.url)}" loading="lazy" alt="" referrerpolicy="no-referrer"${extraAttrs || ''}${imgErrorAttr()} />`;
+  return `<img src="${escapeHtml(img.url)}" loading="lazy" alt="" referrerpolicy="no-referrer"${extraAttrs || ''}${imgErrorAttr()} />`;
 }
 
 // 上游给的 pub_time 是"刚刚/3小时前"这类相对时间,直接用;时间戳只进 title 做精确展示
@@ -945,20 +929,20 @@ function cardHTML(card) {
     const href = card.bvid ? `/player?bv=${encodeURIComponent(card.bvid)}` : `/player?av=${card.aid}`;
     // 时长压在封面右下角,播放/弹幕数放到卡片信息里(与首页、个人主页一致)
     const stats = [
-      card.play ? `<span class="stat-item" title="播放">${PLAY_ICON}${esc(card.play)}</span>` : '',
-      card.danmaku ? `<span class="stat-item" title="弹幕">${DANMAKU_ICON}${esc(card.danmaku)}</span>` : '',
+      card.play ? `<span class="stat-item" title="播放">${PLAY_ICON}${escapeHtml(card.play)}</span>` : '',
+      card.danmaku ? `<span class="stat-item" title="弹幕">${DANMAKU_ICON}${escapeHtml(card.danmaku)}</span>` : '',
     ].filter(Boolean).join('');
     const cover = card.cover
       ? `<span class="dy-card-cover">${imageHTML({ url: card.cover })}
-          ${card.duration ? `<span class="dy-card-dur">${esc(card.duration)}</span>` : ''}
+          ${card.duration ? `<span class="dy-card-dur">${escapeHtml(card.duration)}</span>` : ''}
         </span>`
       : `<span class="dy-card-cover"></span>`;
     // 整块卡片就是播放页入口(封面/标题只是卡里的元素),右键新开、中键、状态栏预览都是原生行为
     return `<a class="dy-card" href="${href}">
       ${cover}
       <div class="dy-card-info">
-        <span class="dy-card-title" title="${esc(plainText(card.title))}">${card.title}</span>
-        ${card.desc ? `<span class="dy-card-brief" title="${esc(plainText(card.desc))}">${card.desc}</span>` : ''}
+        <span class="dy-card-title" title="${escapeHtml(plainText(card.title))}">${card.title}</span>
+        ${card.desc ? `<span class="dy-card-brief" title="${escapeHtml(plainText(card.desc))}">${card.desc}</span>` : ''}
         ${card.badge ? `<span class="dy-badge">${card.badge}</span>` : ''}
         ${stats ? `<span class="dy-card-stats">${stats}</span>` : ''}
       </div>
@@ -975,11 +959,11 @@ function cardHTML(card) {
       <div class="dy-card-info">
         <span class="dy-card-title">${card.title}</span>
         ${card.badge ? `<span class="dy-badge">${card.badge}</span>` : ''}
-        ${meta ? `<span class="dy-card-desc">${esc(meta)}</span>` : ''}
+        ${meta ? `<span class="dy-card-desc">${escapeHtml(meta)}</span>` : ''}
       </div>`;
     // 同视频卡整块可点;专栏/直播/详情页都是站外跳转,带上 noreferrer
     return card.url
-      ? `<a class="${cls}" href="${esc(card.url)}" rel="noreferrer">${inner}</a>`
+      ? `<a class="${cls}" href="${escapeHtml(card.url)}" rel="noreferrer">${inner}</a>`
       : `<div class="${cls}">${inner}</div>`;
   }
 
@@ -996,9 +980,9 @@ function forwardHTML(forward) {
   const href = author.mid ? `/account?mid=${author.mid}` : forward.url;
   const title = forward.card && forward.card.title ? plainText(forward.card.title) : '';
   return `<div class="dy-forward">
-    <div class="dy-forward-author">@<a href="${esc(href)}"${author.mid ? '' : ' rel="noreferrer"'}>${author.name || '原动态'}</a></div>
+    <div class="dy-forward-author">@<a href="${escapeHtml(href)}"${author.mid ? '' : ' rel="noreferrer"'}>${author.name || '原动态'}</a></div>
     ${forward.text ? `<div class="dy-text">${forward.text}</div>` : ''}
-    ${title ? `<div class="dy-card-meta">${esc(title)}</div>` : ''}
+    ${title ? `<div class="dy-card-meta">${escapeHtml(title)}</div>` : ''}
   </div>`;
 }
 
@@ -1018,7 +1002,7 @@ function statsHTML(item, index) {
   const stat = item.stat || {};
   const statHTML = (key) => `<span class="dy-stat">${statIcon(key)}${formatCount(stat[key])}</span>`;
   const likeHTML = `<button class="dy-stat-btn dy-like-btn${stat.liked ? ' active' : ''}" type="button"
-      data-dyn-id="${esc(item.id)}" data-liked="${stat.liked ? '1' : ''}"
+      data-dyn-id="${escapeHtml(item.id)}" data-liked="${stat.liked ? '1' : ''}"
       title="${stat.liked ? '取消点赞' : '点赞'}">${statIcon('like')}${formatCount(stat.like)}</button>`;
   const commentHTML = item.commentType && item.commentOid
     ? `<button class="dy-stat-btn" type="button" data-comment-toggle="${index}" title="查看评论">
@@ -1042,10 +1026,12 @@ function itemHTML(item, index) {
   const meta = [author.pubAction, author.time || absoluteTime(author.ts)].filter(Boolean).join(' · ');
   return `<div class="dy-item" data-index="${index}">
     <div class="dy-head">
-      <a class="dy-avatar" href="${esc(avatarHref)}"${external}>${imageHTML({ url: author.face })}</a>
+      <a class="dy-avatar" href="${escapeHtml(avatarHref)}"${external}>${imageHTML({ url: author.face })}</a>
       <div class="dy-author">
-        <a class="dy-name" href="${esc(avatarHref)}"${external}>${author.name || '未知用户'}</a>
-        <div class="dy-sub" title="${esc(absoluteTime(author.ts))}"><span>${meta}</span>${tags}</div>
+        <!-- author.name / card.title / card.desc 由服务端 mapDynamicAuthor、mapDynamicCard
+             用 escapeHtml 转过(见 server.js),这里直接拼;不要再转一次,否则二次转义 -->
+        <a class="dy-name" href="${escapeHtml(avatarHref)}"${external}>${author.name || '未知用户'}</a>
+        <div class="dy-sub" title="${escapeHtml(absoluteTime(author.ts))}"><span>${meta}</span>${tags}</div>
       </div>
     </div>
     <div class="dy-body">
@@ -1105,7 +1091,7 @@ function commentLikeHTML(item) {
   const liked = !!item.liked;
   const raw = Number(item.like) || 0;
   return `<button class="dy-stat-btn dy-comment-like${liked ? ' active' : ''}" type="button"
-      data-comment-like="${esc(item.rpid)}" data-liked="${liked ? '1' : '0'}" data-like-raw="${raw}"
+      data-comment-like="${escapeHtml(item.rpid)}" data-liked="${liked ? '1' : '0'}" data-like-raw="${raw}"
       title="${liked ? '取消点赞' : '点赞'}">
       ${statIcon('likeAction', 13)}${formatCount(raw)}
     </button>`;
@@ -1218,10 +1204,10 @@ function commentItemHTML(item, isTop) {
   return `<div class="dy-comment">
     <a class="dy-comment-avatar"${link}>${avatar}</a>
     <div class="dy-comment-body">
-      <a class="dy-comment-uname"${link}>${esc(item.uname || '匿名用户')}</a>${topBadge}
+      <a class="dy-comment-uname"${link}>${escapeHtml(item.uname || '匿名用户')}</a>${topBadge}
       <div class="dy-comment-text">${renderCommentText(item)}</div>
       <div class="dy-comment-meta">
-        <span>${esc(absoluteTime(item.ctime))}</span>
+        <span>${escapeHtml(absoluteTime(item.ctime))}</span>
         ${commentLikeHTML(item)}
       </div>
       ${replies}
@@ -1236,10 +1222,10 @@ function subReplyHTML(item) {
   return `<div class="dy-sub-reply">
     <a class="dy-sub-reply-avatar"${link}>${avatar}</a>
     <div class="dy-sub-reply-body">
-      <a class="dy-sub-reply-uname"${link}>${esc(item.uname || '匿名用户')}</a>
+      <a class="dy-sub-reply-uname"${link}>${escapeHtml(item.uname || '匿名用户')}</a>
       <div class="dy-sub-reply-text">${renderCommentText(item)}</div>
       <div class="dy-sub-reply-meta">
-        <span>${esc(absoluteTime(item.ctime))}</span>
+        <span>${escapeHtml(absoluteTime(item.ctime))}</span>
         ${commentLikeHTML(item)}
       </div>
     </div>
@@ -1286,7 +1272,7 @@ function renderComments(section, index, { reset = false } = {}) {
 // 正文渲染: 与服务端 mapComment 的产出对齐——message 是纯文本,emoji 是"表情名 -> {url,size}",
 // members 是 @ 到的人。全部先转义再拼,只有这里自己产出的 <img>/<a> 是可信标签
 function renderCommentText(item) {
-  let html = esc(item.message || '');
+  let html = escapeHtml(item.message || '');
   const emoji = item.emoji || {};
   const names = Object.keys(emoji).sort((a, b) => b.length - a.length);
   if (names.length) {
@@ -1294,7 +1280,7 @@ function renderCommentText(item) {
     html = html.replace(re, (whole, name) => {
       const e = emoji[name] || {};
       const big = e.size === 2 ? ' big' : '';
-      return `<img class="dy-comment-emoji${big}" src="${esc(e.url || '')}" alt="${esc(whole)}" loading="lazy" referrerpolicy="no-referrer" />`;
+      return `<img class="dy-comment-emoji${big}" src="${escapeHtml(e.url || '')}" alt="${escapeHtml(whole)}" loading="lazy" referrerpolicy="no-referrer" />`;
     });
   }
   const members = (item.members || []).filter((m) => m.uname).sort((a, b) => b.uname.length - a.uname.length);
@@ -1304,7 +1290,7 @@ function renderCommentText(item) {
     const re = new RegExp('@(' + members.map((m) => escapeRegExp(m.uname)).join('|') + ')', 'g');
     html = html.replace(re, (whole, name) => {
       const mid = midOf[name];
-      return mid ? `<a href="/account?mid=${encodeURIComponent(mid)}">@${esc(name)}</a>` : whole;
+      return mid ? `<a href="/account?mid=${encodeURIComponent(mid)}">@${escapeHtml(name)}</a>` : whole;
     });
   }
   return html.replace(/\n/g, '<br />') + commentPicsHTML(item);
@@ -1417,7 +1403,7 @@ async function loadSubReplies(index, box) {
       box.insertAdjacentHTML('beforeend', '<button class="dy-comment-more-btn dy-sub-reply-more" type="button">查看更多回复</button>');
     }
   } catch (err) {
-    const html = `<div class="dy-comments-error">${esc(err.message || '回复加载失败,请稍后重试')}</div>`;
+    const html = `<div class="dy-comments-error">${escapeHtml(err.message || '回复加载失败,请稍后重试')}</div>`;
     if (page === 1) box.innerHTML = html;
     else box.insertAdjacentHTML('beforeend', html);
     box.dataset.page = '';
@@ -1487,7 +1473,7 @@ function loginPlaceholder() {
 
 function errorPlaceholder() {
   dynamicList.innerHTML = `<div class="error-box">
-    <p>${esc(dynamicError || '加载动态失败,请稍后重试')}</p>
+    <p>${escapeHtml(dynamicError || '加载动态失败,请稍后重试')}</p>
     <button class="load-more-btn" type="button" id="retryBtn">重试</button>
   </div>`;
   const retry = document.getElementById('retryBtn');

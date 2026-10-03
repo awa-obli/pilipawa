@@ -7,6 +7,50 @@
 
 const historyDropdown = document.getElementById('historyDropdown');
 
+/* ----------------------------- 共享转义工具 -----------------------------
+ * 全站唯一一份:各页面原本各写一份(escapeHtml ×5、stripHtml ×3),改一处要改多处,
+ * 漏改一次就是一个 XSS —— 搜索页的反射型 XSS 与 account 页 stripHtml 解析他人签名
+ * 都是这么来的。新页面直接调用这里的函数,不要再复制实现。
+ *
+ * 约定(服务端与前端的分工):
+ *   服务端口径 —— 只有"标题/富文本"走 sanitizeTitle / mapRichTextNodes 变成可信 HTML;
+ *                 昵称(uname/name/author)、签名(sign/usign)一律是纯文本。
+ *   前端口径 —— 纯文本字段拼进 innerHTML 前必须 escapeHtml;
+ *                 可信 HTML 字段(标题、动态正文)直接拼,但拼进属性时要先 plainText 去标签。
+ * -------------------------------------------------------------------- */
+
+// 可拼进 innerHTML 的转义。标签和引号都转,因此同一份结果也能安全放进属性值。
+// 注意:不可重复调用(会把 &amp; 再转成 &amp;amp;),服务端已转义的字段不要再转一次。
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// 属性值转义:只处理 & 和 ",用于"确定是纯文本、但不需要动标签"的场景(如 data-* 回显)。
+// 先把 & 转掉再转引号,顺序不能反,否则会得到 &amp;quot; 这种二次转义
+function escapeAttr(str) {
+  return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+// 表情名/昵称要拼进正则当字面量时,特殊字符必须转义
+function escapeRegExp(str) {
+  return String(str == null ? '' : str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// 去标签的纯文本:用于把带高亮标签的标题塞进 title 属性。
+// 用正则而不是 document.createElement('div').innerHTML —— 后者会把上游文本当 HTML 解析,
+// 是真实的解析型 sink(旧 account 页的 stripHtml 就是这么被他人签名 XSS 的)。
+function plainText(str) {
+  return String(str == null ? '' : str).replace(/<[^>]*>/g, '');
+}
+
+// 历史上的名字,保留为 plainText 的别名,避免旧调用点失效
+const stripHtml = plainText;
+
 // 本文件自带的属性转义:不依赖页面上的 escapeAttr(account 页那份对空值行为不同)
 function attrEscape(str) {
   return String(str).replace(/"/g, '&quot;');
@@ -148,14 +192,7 @@ historyDropdown.addEventListener('click', (e) => {
   let requestSeq = 0;
   let abortController = null;
 
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  // escapeHtml 已提到文件顶部的共享转义工具区,这里不再保留副本
 
   // 上游 name 字段自带 <em class="suggest_high_light">关键词</em>。
   // 只认这一种标签: 先摘出来占位、把其余标签全部去掉(防注入),最后再还原高亮标签

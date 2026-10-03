@@ -195,6 +195,12 @@
     transition: color .15s ease, border-color .15s ease;
   }
   .logout-btn:hover { color: var(--pink-dark); border-color: var(--pink-dark); }
+  /* 确认后到跳转之间按钮会禁用:pointer-events 一并关掉,免得悬停还变色,看着像还能点 */
+  .logout-btn:disabled {
+    opacity: .55;
+    cursor: default;
+    pointer-events: none;
+  }
 
   .profile-skeleton {
     background: var(--card);
@@ -1281,23 +1287,9 @@ function formatDateTime(ts) {
   return `${d.getFullYear()}-${formatDate(ts)} ${time}`;
 }
 
-function escapeAttr(str) {
-  return (str || '').replace(/"/g, '&quot;');
-}
-
-// 拼进 HTML 的上游文本(收藏夹标题这类)先转义;element.textContent 走的是别处的路径
-function escapeHtml(str) {
-  return String(str == null ? '' : str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-function stripHtml(html) {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html || '';
-  return tmp.textContent || tmp.innerText || '';
-}
+// 转义工具(escapeHtml / escapeAttr / plainText)统一由 common.js 提供:
+// 本页原来那三份副本少转了单引号,且 stripHtml 拿 innerHTML 解析上游文本,
+// 他人签名就能借它执行 —— 这是本页存储型 XSS 的来源,一起删掉
 
 // URL 上的 ?mid= 参数决定本页是"我的主页"还是"他人空间",有值且为纯数字才算数
 function getUrlMid() {
@@ -1471,10 +1463,10 @@ function renderOtherProfile(data) {
       <img class="profile-avatar" src="${data.avatar || ''}" referrerpolicy="no-referrer" alt="" onerror="this.style.visibility='hidden'" />
       <div class="profile-info">
         <div class="profile-name-row">
-          <span class="profile-name">${data.name || ''}</span>
+          <span class="profile-name">${escapeHtml(data.name)}</span>
         </div>
         <p class="profile-uid">UID: ${data.mid || '-'}</p>
-        ${data.sign ? `<p class="profile-sign">${stripHtml(data.sign)}</p>` : ''}
+        ${data.sign ? `<p class="profile-sign">${escapeHtml(data.sign)}</p>` : ''}
         <div class="profile-stats">
           <!-- 与"我的主页"一样,两个数字可点开看列表;带上 mid 就是看 TA 的列表 -->
           <span class="stat-link" onclick="openRelationsModal('following', ${data.mid || 0})">关注 <b>${following}</b></span>
@@ -1677,7 +1669,7 @@ function renderNotLoggedIn() {
 function renderProfileError(msg, retry) {
   document.title = '个人主页 - B站视频搜索器';
   const area = document.getElementById('profileArea');
-  area.innerHTML = `<div class="error-box">${msg || '加载失败'}<br>
+  area.innerHTML = `<div class="error-box">${escapeHtml(msg || '加载失败')}<br>
     <button type="button" class="retry-btn" id="profileRetryBtn">重试</button></div>`;
   const btn = area.querySelector('#profileRetryBtn');
   if (btn && retry) btn.addEventListener('click', retry);
@@ -1702,11 +1694,11 @@ function renderProfile(p) {
       <img class="profile-avatar" src="${p.avatar || ''}" referrerpolicy="no-referrer" alt="" onerror="this.style.visibility='hidden'" />
       <div class="profile-info">
         <div class="profile-name-row">
-          <span class="profile-name">${p.uname || ''}</span>
+          <span class="profile-name">${escapeHtml(p.uname)}</span>
           ${badges.join('')}
         </div>
         <p class="profile-uid">UID: ${p.mid || '-'}</p>
-        ${p.sign ? `<p class="profile-sign">${stripHtml(p.sign)}</p>` : ''}
+        ${p.sign ? `<p class="profile-sign">${escapeHtml(p.sign)}</p>` : ''}
         <div class="profile-stats">
           <span>硬币 <b>${money}</b></span>
           <span class="stat-link" onclick="openRelationsModal('following')">关注 <b>${following}</b></span>
@@ -1723,6 +1715,11 @@ function renderProfile(p) {
 }
 
 async function handleLogout() {
+  if (!window.confirm('确定退出登录吗？退出后需要重新扫码登录 B 站账号。')) return;
+
+  // 请求在路上时禁用按钮,避免连点发第二次退出(第二次登录态已失效,只会白报一次错)
+  const btn = document.getElementById('logoutBtn');
+  if (btn) btn.disabled = true;
   try {
     await fetch('/api/login/logout', { method: 'POST' });
   } catch (err) {
@@ -1831,8 +1828,8 @@ function relItemHTML(u) {
       <div class="rel-user" data-mid="${u.mid || 0}" style="cursor:pointer; display:flex; align-items:center; gap:12px; min-width:0; flex:1;">
         <img class="rel-avatar" src="${u.avatar || ''}" referrerpolicy="no-referrer" alt="" onerror="this.style.visibility='hidden'" />
         <div class="rel-info">
-          <div class="rel-name">${u.name || ''}</div>
-          <div class="rel-sign">${stripHtml(u.sign) || '暂无简介'}</div>
+          <div class="rel-name">${escapeHtml(u.name)}</div>
+          <div class="rel-sign">${u.sign ? escapeHtml(u.sign) : '暂无简介'}</div>
         </div>
       </div>
       ${followBtn}
@@ -1846,7 +1843,7 @@ function renderRelationsList() {
     // 失败提示要在这里渲染,不能在 catch 里直接写 innerHTML:
     // loadRelationsList 的 finally 会紧接着再调一次本函数,刚写进去的错误框会被空列表文案覆盖
     if (relError) {
-      box.innerHTML = `<div class="error-box">${relError}<br>
+      box.innerHTML = `<div class="error-box">${escapeHtml(relError)}<br>
         <button type="button" class="retry-btn" id="relRetryBtn">重试</button></div>`;
       return;
     }
@@ -1990,7 +1987,7 @@ function videoCardHTML({ href, pic, title, author, duration, authorMid, favTime,
               <rect x="0.5" y="0.5" width="23" height="19" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
               <text x="12" y="14" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Roboto, sans-serif">UP</text>
             </svg>
-            <span class="author-name">${author}</span>${favTag}
+            <span class="author-name">${escapeHtml(author)}</span>${favTag}
           </a>
         </div>`
     : (meta ? `<div class="author"><span>${meta}</span></div>` : '');
@@ -2009,7 +2006,7 @@ function videoCardHTML({ href, pic, title, author, duration, authorMid, favTime,
       </a>
       <div class="card-body">
         <div class="card-title-row">
-          <p class="title" title="${escapeAttr(stripHtml(title))}"><a class="title-text"${linkAttrs}>${title}</a></p>
+          <p class="title" title="${escapeAttr(plainText(title))}"><a class="title-text"${linkAttrs}>${title}</a></p>
           ${actionHTML || ''}
         </div>
         ${infoHTML}
@@ -2337,7 +2334,7 @@ function renderHistoryList() {
     // 失败提示在这里渲染: loadHistory 的 finally 会紧接着再调一次本函数,
     // 在 catch 里写 innerHTML 会被下面的"暂无观看历史"覆盖
     if (historyError) {
-      box.innerHTML = `<div class="error-box">${historyError}<br>
+      box.innerHTML = `<div class="error-box">${escapeHtml(historyError)}<br>
         <button type="button" class="retry-btn" id="historyRetryBtn">重试</button></div>`;
       const btn = box.querySelector('#historyRetryBtn');
       if (btn) btn.addEventListener('click', () => loadHistory(true));
@@ -2438,7 +2435,7 @@ async function loadFavFolders() {
       openFavFolder(favFolders[0].id, favFolders[0].title);
     }
   } catch (err) {
-    box.innerHTML = `<div class="error-box">${err.message || '加载失败,请稍后重试'}</div>`;
+    box.innerHTML = `<div class="error-box">${escapeHtml(err.message || '加载失败,请稍后重试')}</div>`;
   }
 }
 
@@ -2879,7 +2876,7 @@ async function submitFavPick(action) {
 function favCardHTML(item) {
   // 标题右侧的"..."按钮:操作(复制到/移动到/取消收藏)都收在它展开的菜单里。
   // 三项都要 aid(deal 的 rid,也是搬运的 resources),番剧/课程等非视频条目后端给 0,不给按钮
-  const menuAttrs = `data-menu-id="${item.aid}" data-menu-media-id="${escapeAttr(String(favDetailMediaId || ''))}" data-menu-type="${item.type || 2}" data-menu-title="${escapeAttr(stripHtml(item.title))}"`;
+  const menuAttrs = `data-menu-id="${item.aid}" data-menu-media-id="${escapeAttr(String(favDetailMediaId || ''))}" data-menu-type="${item.type || 2}" data-menu-title="${escapeAttr(plainText(item.title))}"`;
   const actionHTML = item.aid
     ? `<button type="button" class="card-more" ${menuAttrs} title="更多操作" aria-label="更多操作" aria-haspopup="true">⋯</button>
        ${favCardMenuHTML()}`
@@ -2904,7 +2901,7 @@ function renderFavDetailList() {
   if (!favDetailList.length) {
     // 失败提示在这里渲染: finally 里的这次重绘会覆盖 catch 写的内容
     if (favDetailError) {
-      box.innerHTML = `<div class="error-box">${favDetailError}<br>
+      box.innerHTML = `<div class="error-box">${escapeHtml(favDetailError)}<br>
         <button type="button" class="retry-btn" id="favDetailRetryBtn">重试</button></div>`;
       const btn = box.querySelector('#favDetailRetryBtn');
       if (btn) btn.addEventListener('click', () => loadFavDetail(true));
