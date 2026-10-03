@@ -184,7 +184,7 @@
         .action-btn svg {
             flex-shrink: 0;
         }
-        /* 选择收藏夹弹窗的样式在 common.css(与个人主页的"移动/复制到收藏夹"共用) */
+        /* 选择收藏夹弹窗的样式在本页(个人主页那套"移动/复制到收藏夹"有自己的同色副本) */
         /* 互动按钮的轻提示 */
         .action-toast {
             position: fixed;
@@ -717,6 +717,126 @@
             font-size: 12px;
         }
         .comment-img-mask.is-multi .comment-img-count { display: block; }
+        /* ----------------------------- 选择收藏夹弹窗 -----------------------------
+           点"收藏"打开,夹子多时只有列表内部滚动,弹窗高度不变;勾选状态由
+           loadFavFolders/updateFavFolderUI 填充。个人主页"复制/移动到收藏夹"
+           用的是同一套类名,那边在自己的 <style> 里也留了一份同样的样式。 */
+        .fav-folder-mask {
+            position: fixed;
+            inset: 0;
+            background: var(--overlay);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+            display: none;
+        }
+        .fav-folder-mask.show { display: flex; }
+        .fav-folder-modal {
+            width: 320px;
+            background: var(--card);
+            border-radius: 14px;
+            padding: 20px 0 0;
+            text-align: center;
+        }
+        .fav-folder-title {
+            margin: 0 0 14px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        /* 列表:夹子名在左(count 列会把名字列挤窄),名字过长省略,不影响数字列 */
+        .fav-folder-list {
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 0 12px;
+            text-align: left;
+        }
+        .fav-folder-item {
+            display: flex;
+            align-items: center;
+            padding: 9px 8px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: var(--text-2);
+            cursor: pointer;
+        }
+        .fav-folder-item:hover { background: var(--hover); }
+        .fav-folder-name {
+            flex: 1;
+            min-width: 0;
+            margin-right: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .fav-folder-count {
+            flex-shrink: 0;
+            color: var(--text-3);
+            font-size: 12px;
+        }
+        /* 勾选标记:未勾选时只留一个淡色对勾占位,选中后整行变主色 */
+        .fav-folder-check {
+            flex-shrink: 0;
+            display: flex;
+            margin-right: 10px;
+            color: var(--border);
+        }
+        .fav-folder-item.checked { color: var(--pink); }
+        .fav-folder-item.checked .fav-folder-check { color: var(--pink); }
+        .fav-folder-placeholder {
+            padding: 12px 10px 16px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-3);
+        }
+        .fav-folder-error {
+            padding: 12px 10px 16px;
+            font-size: 13px;
+            color: var(--text-2);
+        }
+        .fav-folder-retry {
+            margin-top: 10px;
+            padding: 5px 14px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--card);
+            color: var(--text-2);
+            font-size: 12.5px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .fav-folder-retry:hover { color: var(--text); border-color: var(--text-3); }
+        /* 底部操作行:两页都是"取消 + 确定",按钮等宽排在中间 */
+        .fav-folder-foot {
+            display: grid;
+            grid-auto-flow: column;
+            grid-auto-columns: 1fr;
+            gap: 10px;
+            width: 260px;
+            margin: 16px auto 20px;
+        }
+        .fav-folder-btn {
+            padding: 7px 0;
+            border: none;
+            border-radius: 16px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .fav-folder-btn.cancel {
+            background: var(--fill);
+            color: var(--text-2);
+        }
+        .fav-folder-btn.cancel:hover { background: var(--hover-strong); color: var(--text); }
+        .fav-folder-btn.confirm {
+            background: var(--pink);
+            color: var(--on-brand);
+        }
+        .fav-folder-btn.confirm:hover { background: var(--pink-dark); }
+        .fav-folder-btn:disabled {
+            cursor: default;
+            opacity: .55;
+        }
         /* 手机屏窄,适应窗口那 40px 留白把图挤得太小,收窄一档 */
         @media (max-width: 600px) {
             .comment-img-viewport img {
@@ -1515,6 +1635,12 @@
                 <div class="login-slot" id="loginSlot">
                     <button class="login-btn" type="button" onclick="openLoginModal()">登录</button>
                 </div>
+                <a class="icon-btn" id="navDynamicBtn" href="/dynamic" title="动态" aria-label="动态">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="3" y="4" width="18" height="6" rx="2" stroke="currentColor" stroke-width="2"/>
+                        <rect x="3" y="14" width="12" height="6" rx="2" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </a>
                 <a class="icon-btn" id="navHistoryBtn" href="/account?tab=history" title="历史记录" aria-label="历史记录">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="2"/>

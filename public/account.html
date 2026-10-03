@@ -657,14 +657,6 @@
   .card-menu-item svg,
   .folder-menu-item svg { width: 16px; height: 16px; }
 
-/* 搬运弹窗里"目标夹子已经有这条内容"的行:列出来但不让选
-   (上游不会真的重复加入)。底色/文字色沿用 common.css 的 .fav-folder-item */
-  .fav-folder-item.is-disabled {
-    color: var(--text-3);
-    cursor: default;
-  }
-  .fav-folder-item.is-disabled:hover { background: none; }
-
 /* 左侧边栏顶部的"新建收藏夹" */
   .fav-create-btn {
     display: flex;
@@ -876,6 +868,133 @@
   }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* --------------------------- 收藏夹弹窗(本页两处共用) ---------------------------
+   "复制/移动到收藏夹"弹窗 + "新建/编辑收藏夹"信息弹窗共用这一套;播放页"选择收藏夹"
+   用的是同一套类名,样式在那边自己的 <style> 里也留了一份,改这里记得同步。 */
+  .fav-folder-mask {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+    display: none;
+  }
+  .fav-folder-mask.show { display: flex; }
+  .fav-folder-modal {
+    width: 320px;
+    background: var(--card);
+    border-radius: 14px;
+    padding: 20px 0 0;
+    text-align: center;
+  }
+  .fav-folder-title {
+    margin: 0 0 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  /* 列表:夹子名在左(count 列会把名字列挤窄),名字过长省略,不影响数字列 */
+  .fav-folder-list {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 0 12px;
+    text-align: left;
+  }
+  .fav-folder-item {
+    display: flex;
+    align-items: center;
+    padding: 9px 8px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .fav-folder-item:hover { background: var(--hover); }
+  /* "目标夹子已经有这条内容"的行:列出来但不让选(上游不会真的重复加入)。
+     这一条必须排在 .fav-folder-item 之后 —— 权重相同,靠顺序覆盖文字色与光标 */
+  .fav-folder-item.is-disabled {
+    color: var(--text-3);
+    cursor: default;
+  }
+  .fav-folder-item.is-disabled:hover { background: none; }
+  .fav-folder-name {
+    flex: 1;
+    min-width: 0;
+    margin-right: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fav-folder-count {
+    flex-shrink: 0;
+    color: var(--text-3);
+    font-size: 12px;
+  }
+  /* 勾选标记:未勾选时只留一个淡色对勾占位,选中后整行变主色 */
+  .fav-folder-check {
+    flex-shrink: 0;
+    display: flex;
+    margin-right: 10px;
+    color: var(--border);
+  }
+  .fav-folder-item.checked { color: var(--pink); }
+  .fav-folder-item.checked .fav-folder-check { color: var(--pink); }
+  .fav-folder-placeholder {
+    padding: 12px 10px 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-3);
+  }
+  .fav-folder-error {
+    padding: 12px 10px 16px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .fav-folder-retry {
+    margin-top: 10px;
+    padding: 5px 14px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    color: var(--text-2);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .fav-folder-retry:hover { color: var(--text); border-color: var(--text-3); }
+  /* 底部操作行:按钮等宽排在中间,数量由弹窗决定(两处都是"取消 + 确定") */
+  .fav-folder-foot {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 10px;
+    width: 260px;
+    margin: 16px auto 20px;
+  }
+  .fav-folder-btn {
+    padding: 7px 0;
+    border: none;
+    border-radius: 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .fav-folder-btn.cancel {
+    background: var(--fill);
+    color: var(--text-2);
+  }
+  .fav-folder-btn.cancel:hover { background: var(--hover-strong); color: var(--text); }
+  .fav-folder-btn.confirm {
+    background: var(--pink);
+    color: var(--on-brand);
+  }
+  .fav-folder-btn.confirm:hover { background: var(--pink-dark); }
+  .fav-folder-btn:disabled {
+    cursor: default;
+    opacity: .55;
+  }
+
   @media (max-width: 600px) {
     .content { padding: 16px 14px 40px; }
     .profile-card { flex-wrap: wrap; }
@@ -911,6 +1030,12 @@
       <div class="login-slot" id="loginSlot">
         <button class="login-btn" type="button" onclick="openLoginModal()">登录</button>
       </div>
+      <a class="icon-btn" id="navDynamicBtn" href="/dynamic" title="动态" aria-label="动态">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="3" y="4" width="18" height="6" rx="2" stroke="currentColor" stroke-width="2"/>
+          <rect x="3" y="14" width="12" height="6" rx="2" stroke="currentColor" stroke-width="2"/>
+        </svg>
+      </a>
       <a class="icon-btn" id="navHistoryBtn" href="/account?tab=history" title="历史记录" aria-label="历史记录">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="2"/>

@@ -579,7 +579,8 @@ async function pollLoginStatus() {
 }
 
 /* ----------------------------- 顶栏入口的悬停浮层 -----------------------------
- * 历史记录 / 收藏夹按钮悬停(或键盘聚焦)时展开面板,把接口第一页整页列出来,点条目进播放页。
+ * 历史记录 / 收藏夹 / 动态按钮悬停(或键盘聚焦)时展开面板,把接口第一页整页列出来,点条目进播放页。
+ * 动态那颗只列"投稿视频"(上游 type=video 分类):其余动态没有封面,画不成下面这种行。
  * 数据只在首次展开时拉,成功后缓存在内存里;失败不缓存,收起后再悬停会重试。
  * 未登录也能展开,面板里给一句"登录后可查看…"和登录入口,点了开扫码登录弹窗。
  * -------------------------------------------------------------------- */
@@ -593,7 +594,7 @@ async function pollLoginStatus() {
     {
       type: 'history',
       btnId: 'navHistoryBtn',
-      headText: '最近观看',
+      headText: '历史记录',
       moreText: '查看全部历史',
       moreHref: '/account?tab=history',
       emptyText: '暂无观看历史',
@@ -605,6 +606,15 @@ async function pollLoginStatus() {
       moreText: '查看全部收藏夹',
       moreHref: '/account?tab=favorites',
       emptyText: '这个收藏夹还是空的',
+    },
+    {
+      // 只放投稿视频:动态流里图文/纯文字没有封面,画不成下面这种行
+      type: 'videos',
+      btnId: 'navDynamicBtn',
+      headText: '动态',
+      moreText: '查看全部动态',
+      moreHref: '/dynamic',
+      emptyText: '关注的 UP 主最近没投稿',
     },
   ];
 
@@ -675,6 +685,7 @@ async function pollLoginStatus() {
     const total = parseSeconds(item.duration);
     let pct = null;
     let seenText = '';
+    // 观看进度只有历史记录有;动态视频与收藏夹都只显示总时长
     if (type === 'history') {
       if (item.progress < 0) {
         pct = 100;
@@ -690,7 +701,9 @@ async function pollLoginStatus() {
       : fmtDuration(total);
     const meta = (type === 'history'
       ? [item.author, seenText]
-      : [item.author, item.favTime ? `收藏于 ${fmtFavTime(item.favTime)}` : '', invalid ? '视频已失效' : '']
+      : type === 'videos'
+        ? [item.author, item.pubTime]
+        : [item.author, item.favTime ? `收藏于 ${fmtFavTime(item.favTime)}` : '', invalid ? '视频已失效' : '']
     ).filter(Boolean).join(' · ');
     const href = playerHref(item.bvid, item.page, type === 'history' && item.progress > 0 ? item.progress : 0);
 
@@ -721,7 +734,9 @@ async function pollLoginStatus() {
     if (!loggedIn) {
       entry.promptText.textContent = entry.type === 'history'
         ? '登录后可查看历史记录'
-        : '登录后可查看收藏夹';
+        : entry.type === 'videos'
+          ? '登录后可查看关注动态'
+          : '登录后可查看收藏夹';
       entry.listBox.innerHTML = '';
       return;
     }
@@ -749,6 +764,25 @@ async function pollLoginStatus() {
     if (entry.type === 'history') {
       const data = await getJson('/api/account/history?max=0&view_at=0');
       return { list: data.list || [] };
+    }
+    if (entry.type === 'videos') {
+      const data = await getJson('/api/dynamics?type=video');
+      // 动态卡片里的投稿视频与历史/收藏夹条目同样有 bvid/page/duration,直接复用行模板
+      const list = (data.list || [])
+        .filter((item) => item.card && item.card.kind === 'video' && item.card.bvid)
+        .map((item) => ({
+          bvid: item.card.bvid,
+          page: 0,
+          title: item.card.title,
+          author: item.author && item.author.name,
+          // 发布日期直接用动态接口给的相对时间("3天前"/"9月24日"),与动态页一致
+          pubTime: item.author && item.author.time,
+          pic: item.card.cover,
+          duration: item.card.duration,
+          progress: 0,
+          valid: true,
+        }));
+      return { list };
     }
     const folders = await getJson('/api/account/favorites');
     const all = folders.list || [];

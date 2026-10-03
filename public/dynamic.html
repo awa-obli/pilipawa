@@ -1,0 +1,1951 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>动态</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/common.css" />
+<style>
+  /* 单列信息流:收窄一点,长文一行别拉太长,也让动态卡片看起来更聚焦 */
+  .content {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 20px 18px 60px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0;
+  }
+  .refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 16px;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease;
+  }
+  .refresh-btn:hover { color: var(--pink); border-color: var(--pink); }
+  .refresh-btn svg { transition: transform .4s ease; }
+  .refresh-btn.spinning svg { transform: rotate(360deg); }
+
+  /* 每条动态一张卡片:--card 底 + --border 描边 + 12px 圆角(同设置页 .settings-card);
+     整卡不可点,能点的只有封面/标题/UP 名/图片 */
+  .dy-item {
+    margin-bottom: 14px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card);
+  }
+  .dy-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dy-avatar {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--thumb-bg);
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .dy-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .dy-author {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .dy-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+    transition: color .12s ease;
+  }
+  .dy-name:hover { color: var(--pink); }
+  .dy-sub {
+    font-size: 12px;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  /* 置顶/折叠这类标记用悬停底色同族的浅底,不引新颜色 */
+  .dy-tag {
+    flex-shrink: 0;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--fill);
+    color: var(--text-2);
+  }
+  .dy-tag.pink { background: var(--pink-soft); color: var(--pink); }
+
+  .dy-body { margin-left: 50px; }
+  .dy-text {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 6;
+    line-clamp: 6;
+    -webkit-box-orient: vertical;
+  }
+  .dy-text.expanded {
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    display: block;
+  }
+  .dy-text a { color: var(--blue); text-decoration: none; }
+  .dy-text a:hover { text-decoration: underline; }
+  .dy-emote {
+    height: 20px;
+    width: auto;
+    vertical-align: text-bottom;
+  }
+  .dy-more {
+    margin-top: 6px;
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 13px;
+    color: var(--pink);
+    cursor: pointer;
+  }
+  .dy-more:hover { color: var(--pink-dark); }
+
+  /* 图片九宫格:列数按张数定,单图给一个不铺满的宽度 */
+  .dy-images {
+    margin-top: 10px;
+    display: grid;
+    gap: 6px;
+  }
+  .dy-images.count-1 { grid-template-columns: minmax(0, 320px); }
+  .dy-images.count-2 { grid-template-columns: repeat(2, minmax(0, 180px)); }
+  .dy-images.count-3,
+  .dy-images.count-6,
+  .dy-images.count-9 { grid-template-columns: repeat(3, minmax(0, 180px)); }
+  .dy-images.count-4 { grid-template-columns: repeat(2, minmax(0, 180px)); }
+  .dy-images.count-5,
+  .dy-images.count-7,
+  .dy-images.count-8 { grid-template-columns: repeat(3, minmax(0, 180px)); }
+  .dy-img {
+    display: block;
+    width: 100%;
+    border: none;
+    padding: 0;
+    background: var(--thumb-bg);
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: zoom-in;
+  }
+  .dy-img img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .dy-images.count-1 .dy-img { max-height: 340px; }
+  .dy-img-count {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  /* 主体卡片(视频/专栏/直播等):左侧封面 + 右侧信息,与首页视频卡片同一形状;
+     卡面用设置页那种 --card 底 + 描边 + 12px 圆角,整块不可点,封面与标题才是入口。
+     高度给一个下限,免得只有一行标题的卡片太扁(右侧信息是垂直居中的,多出来的高度会平摊到上下) */
+  .dy-card {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    min-height: 124px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  /* 没有正文时卡片紧贴在作者行下面,单独补一点间距 */
+  .dy-body > .dy-card:first-child { margin-top: 8px; }
+  /* 封面固定 16:9,宽度按卡片高度(124px)反推成 220px,这样竖排方向不会被拉伸变形 */
+  .dy-card-cover {
+    flex-shrink: 0;
+    display: block;
+    position: relative;
+    width: 220px;
+    aspect-ratio: 16 / 9;
+    background: var(--thumb-bg);
+    overflow: hidden;
+  }
+  .dy-card-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  /* 时长与播放/弹幕数压在封面左下/右下(与首页、个人主页一致) */
+  .dy-card-dur {
+    position: absolute;
+    right: 6px; bottom: 6px;
+    background: rgba(0,0,0,.6);
+    color: #fff;
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    z-index: 1;
+  }
+  /* 播放/弹幕数放在卡片信息里(与角标同一列),不再压在封面上 */
+  .dy-card-stats {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .dy-card-stats .stat-item { display: flex; align-items: center; gap: 3px; }
+  .dy-card-stats .stat-item svg { flex-shrink: 0; }
+  .dy-card-info {
+    min-width: 0;
+    padding: 10px 12px 10px 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+  }
+  .dy-card-title {
+    font-size: 13px;
+    line-height: 1.4;
+    font-weight: 600;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition: color .12s ease;
+  }
+  /* 主体卡片整块就是一个 <a>(封面、标题只是卡里的元素),去掉链接默认色和下划线,悬停时标题变粉 */
+  a.dy-card {
+    color: inherit;
+    text-decoration: none;
+  }
+  a.dy-card:hover .dy-card-title { color: var(--pink); }
+  .dy-card-meta {
+    font-size: 12px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dy-card-desc {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-2);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* 视频简介只给一行,超出用省略号截断 */
+  .dy-card-brief {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dy-badge {
+    align-self: flex-start;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--pink-soft);
+    color: var(--pink);
+  }
+  .dy-live .dy-badge { background: var(--fill); color: var(--text-2); }
+  .dy-none {
+    margin-top: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card);
+  }
+
+  /* 转发动态:原动态收在浅底块里,只给作者 + 文字 + 标题,不再往下递归 */
+  .dy-forward {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--fill);
+  }
+  .dy-forward .dy-text { color: var(--text-2); }
+  .dy-forward-author {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .dy-forward-author a { color: var(--text-2); text-decoration: none; }
+  .dy-forward-author a:hover { color: var(--pink); }
+
+  .dy-foot {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .dy-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .dy-stat svg { flex-shrink: 0; }
+  /* 统计行里的可点项(点赞、评论),与旁边只读的转发数区分开:可点、悬停变粉 */
+  .dy-stat-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    transition: color .15s ease;
+  }
+  .dy-stat-btn:hover { color: var(--pink); }
+  .dy-stat-btn.active { color: var(--pink); }
+  .dy-stat-btn:disabled { cursor: default; opacity: .6; }
+  .dy-stat-btn svg { flex-shrink: 0; }
+  /* 评论上的点赞:底色不能跟随 .dy-comment-meta 的灰字,未点赞时按 .dy-stat-btn 的浅灰走 */
+  .dy-comment-like { color: var(--text-3); }
+
+  /* 动态评论:点"评论"在该条下面就地展开,与播放页评论区同一套样式(不设卡面) */
+  .dy-comments {
+    display: none;
+    margin-top: 14px;
+  }
+  .dy-comments.open { display: block; }
+  .dy-comments-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .dy-comments-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .dy-comment-sort {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dy-comment-tab {
+    display: inline-block;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-3);
+    font-size: 13px;
+    cursor: pointer;
+    transition: color .15s ease;
+  }
+  .dy-comment-tab:hover { background: none; color: var(--pink); }
+  .dy-comment-tab.active { background: none; color: var(--pink); border: none; }
+  .dy-comment-sort-divider { color: var(--border); font-size: 12px; }
+  .dy-comment-list {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .dy-comment { display: flex; gap: 12px; }
+  .dy-comment-avatar {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--fill);
+    border: 1px solid var(--border);
+  }
+  .dy-comment-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dy-comment-body { flex: 1; min-width: 0; }
+  .dy-comment-uname {
+    display: inline-block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
+    margin-bottom: 4px;
+    text-decoration: none;
+    transition: color .12s ease;
+  }
+  .dy-comment-uname:hover { color: var(--pink); }
+  /* 置顶评论昵称后面的小标签 */
+  .dy-comment-top-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 4px;
+    border: 1px solid var(--pink);
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 15px;
+    color: var(--pink);
+  }
+  .dy-comment-text {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    word-break: break-all;
+    white-space: pre-wrap;
+  }
+  .dy-comment-text a,
+  .dy-sub-reply-text a { color: var(--blue); text-decoration: none; }
+  .dy-comment-text a:hover,
+  .dy-sub-reply-text a:hover { text-decoration: underline; }
+  .dy-comment-emoji { height: 20px; width: auto; vertical-align: text-bottom; margin: 0 1px; }
+  .dy-comment-emoji.big { height: 36px; }
+  /* 评论附图:与播放页同一套(单图保持原比例,多图统一切成方形),点开是本页的大图预览 */
+  .dy-comment-pics {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .dy-comment-pics .dy-img { width: auto; max-width: 100%; }
+  .dy-comment-pics .dy-img img {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 200px;
+    object-fit: contain;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--fill);
+  }
+  .dy-comment-pics.is-multi .dy-img { width: 110px; height: 110px; }
+  .dy-comment-pics.is-multi .dy-img img { width: 100%; height: 100%; object-fit: cover; }
+  .dy-comment-meta {
+    margin-top: 6px;
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .dy-comment-more-btn {
+    margin-top: 8px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-3);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color .15s ease;
+  }
+  .dy-comment-more-btn:hover { background: none; color: var(--pink); }
+  .dy-sub-replies {
+    margin-top: 10px;
+    padding-left: 14px;
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dy-sub-reply { display: flex; gap: 8px; }
+  .dy-sub-reply-avatar {
+    flex: 0 0 26px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--fill);
+    border: 1px solid var(--border);
+  }
+  .dy-sub-reply-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dy-sub-reply-body { flex: 1; min-width: 0; }
+  .dy-sub-reply-uname {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-2);
+    margin-bottom: 3px;
+    text-decoration: none;
+    transition: color .12s ease;
+  }
+  .dy-sub-reply-uname:hover { color: var(--pink); }
+  .dy-sub-reply-text { font-size: 13px; line-height: 1.55; color: var(--text); word-break: break-all; white-space: pre-wrap; }
+  .dy-sub-reply-meta {
+    margin-top: 4px;
+    display: flex;
+    gap: 14px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  /* 楼里的"查看更多回复"别被 flex 拉伸成整行 */
+  .dy-sub-replies .dy-sub-reply-more { align-self: flex-start; }
+  .dy-comments-empty,
+  .dy-comments-error {
+    padding: 6px 0;
+    font-size: 13px;
+    color: var(--text-3);
+  }
+  /* 出错时是"文案 + 重试按钮"一行 */
+  .dy-comments-error {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dy-comments-more { margin-top: 16px; text-align: center; }
+  .dy-comments-more:empty { display: none; }
+  /* 评论/楼层回复的骨架屏,复用上面的 shimmer */
+  .dy-comment-skeleton .dy-comment-avatar,
+  .dy-comment-skeleton .dy-comment-uname,
+  .dy-comment-skeleton .dy-comment-text,
+  .dy-sub-reply-skeleton .dy-sub-reply-avatar,
+  .dy-sub-reply-skeleton .dy-sub-reply-uname,
+  .dy-sub-reply-skeleton .dy-sub-reply-text {
+    background: linear-gradient(90deg, var(--skeleton-1), var(--skeleton-2), var(--skeleton-1));
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+  }
+  .dy-comment-skeleton .dy-comment-uname,
+  .dy-comment-skeleton .dy-comment-text,
+  .dy-sub-reply-skeleton .dy-sub-reply-uname,
+  .dy-sub-reply-skeleton .dy-sub-reply-text { border-radius: 4px; }
+  .dy-comment-skeleton .dy-comment-uname { width: 80px; height: 12px; }
+  .dy-comment-skeleton .dy-comment-text { width: 90%; height: 12px; margin-top: 8px; }
+  .dy-sub-reply-skeleton .dy-sub-reply-uname { width: 60px; height: 10px; }
+  .dy-sub-reply-skeleton .dy-sub-reply-text { width: 85%; height: 10px; margin-top: 6px; }
+  .dy-fold {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-2);
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--fill);
+  }
+
+  /* 未登录 / 加载完 / 出错 */
+  .placeholder, .error-box {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-3);
+    font-size: 14px;
+  }
+  .error-box { color: var(--pink-dark); }
+  .placeholder-btn {
+    margin-top: 16px;
+    padding: 8px 22px;
+    border: none;
+    border-radius: 8px;
+    background: var(--pink);
+    color: var(--on-brand);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .placeholder-btn:hover { background: var(--pink-dark); }
+  .load-more-row { text-align: center; padding: 18px 0 8px; }
+  .load-more-btn {
+    padding: 7px 20px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    color: var(--text-2);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .load-more-btn:hover { color: var(--pink); border-color: var(--pink); }
+
+  /* 骨架屏:与真卡片同结构,替换时高度不跳 */
+  .skeleton-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .skeleton-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .skeleton-line {
+    height: 12px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--skeleton-1), var(--skeleton-2), var(--skeleton-1));
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+  }
+  .skeleton-body { margin-left: 50px; margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .skeleton-meta { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .skeleton-image { height: 120px; border-radius: 6px; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  /* 图片预览:与播放页评论附图那套完全一致(遮罩/视口/圆形按钮/计数),底是图片,
+     固定深色;差别只是类名加了 dy- 前缀、独立成一套变量,两页互不影响。
+     touch-action:none 是触摸端能拖能捏的前提,否则浏览器会抢去做页面滚动 */
+  .dy-img-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .2s ease, visibility .2s;
+    background: rgba(24, 25, 28, .75);
+    touch-action: none;
+  }
+  .dy-img-mask.show { opacity: 1; visibility: visible; }
+  /* 图片视口:一直铺满整屏,放大后图片能整个溢出屏幕,超出部分裁掉、不出滚动条。
+     拖拽发生在这层,浮层上的按钮不会跟着动 */
+  .dy-img-viewport {
+    flex: 1;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .dy-img-viewport img {
+    max-width: calc(100% - 80px);
+    max-height: calc(100% - 80px);
+    object-fit: contain;
+    border-radius: 4px;
+    cursor: zoom-in;
+    /* 放大/恢复的动画:位移和缩放写在同一个 transform 里,过渡时才能一起补间 */
+    transition: transform .25s ease;
+  }
+  /* 拖拽、滚轮、换图、复位都要瞬时生效,这一下不能带过渡 */
+  .dy-img-viewport img.is-instant { transition: none; }
+  /* 本来就不用放大的小图:光标提示"点了就退出预览",点击也确实只关闭 */
+  .dy-img-viewport img.is-small { cursor: zoom-out; }
+  .dy-img-mask.is-zoomed .dy-img-viewport img { cursor: grab; }
+  .dy-img-mask.is-zoomed .dy-img-viewport img:active { cursor: grabbing; }
+  /* 浮层上的圆形按钮(左右切换、右上角关闭):深色底 + 白色图标 */
+  .dy-img-btn {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, .6);
+    color: #fff;
+    cursor: pointer;
+  }
+  .dy-img-btn:hover { background: rgba(0, 0, 0, .75); }
+  /* 左右箭头只在这条动态有多张图时出现(浮层加 is-multi),关闭按钮一直在 */
+  .dy-img-prev,
+  .dy-img-next {
+    top: 50%;
+    display: none;
+    margin-top: -22px;
+  }
+  .dy-img-prev { left: 24px; }
+  .dy-img-next { right: 24px; }
+  .dy-img-close { top: 20px; right: 24px; }
+  .dy-img-mask.is-multi .dy-img-prev,
+  .dy-img-mask.is-multi .dy-img-next { display: flex; }
+  .dy-img-count {
+    position: absolute;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    padding: 3px 10px;
+    border-radius: 11px;
+    background: rgba(0, 0, 0, .5);
+    color: #fff;
+    font-size: 12px;
+  }
+  .dy-img-mask.is-multi .dy-img-count { display: block; }
+  /* 手机屏窄,适应窗口那 40px 留白把图挤得太小,收窄一档 */
+  @media (max-width: 600px) {
+    .dy-img-viewport img {
+      max-width: calc(100% - 24px);
+      max-height: calc(100% - 24px);
+    }
+  }
+
+  .page-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 32px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--toast-bg);
+    color: #fff;
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    z-index: 130;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+    white-space: nowrap;
+  }
+  .page-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  @media (max-width: 600px) {
+    .content { padding: 16px 14px 40px; }
+    .dy-body { margin-left: 0; }
+    .skeleton-body { margin-left: 0; }
+    .dy-images.count-1 { grid-template-columns: minmax(0, 240px); }
+    .dy-images.count-2,
+    .dy-images.count-3,
+    .dy-images.count-4,
+    .dy-images.count-5,
+    .dy-images.count-6,
+    .dy-images.count-7,
+    .dy-images.count-8,
+    .dy-images.count-9 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="/" title="回到首页">
+      <img class="logo-img" src="/pilipawa-logo.png" alt="pilipawa" />
+    </a>
+    <div class="search-wrap">
+      <form class="search-box" id="searchForm">
+        <input id="keyword" type="text" placeholder="搜索你感兴趣的视频" autocomplete="off" />
+        <button class="icon-btn" type="submit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2"/>
+            <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </form>
+      <div class="history-dropdown" id="historyDropdown"></div>
+    </div>
+    <div class="nav-actions">
+      <div class="login-slot" id="loginSlot">
+        <button class="login-btn" type="button" onclick="openLoginModal()">登录</button>
+      </div>
+      <a class="icon-btn" id="navDynamicBtn" href="/dynamic" title="动态" aria-label="动态">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="3" y="4" width="18" height="6" rx="2" stroke="currentColor" stroke-width="2"/>
+          <rect x="3" y="14" width="12" height="6" rx="2" stroke="currentColor" stroke-width="2"/>
+        </svg>
+      </a>
+      <a class="icon-btn" id="navHistoryBtn" href="/account?tab=history" title="历史记录" aria-label="历史记录">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 6.1V12l3.7 2.6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+      <a class="icon-btn" id="navFavBtn" href="/account?tab=favorites" title="收藏夹" aria-label="收藏夹">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10.99 2.32 C11.31 1.44 12.69 1.44 13.01 2.32 L15.04 8.13 C15.17 8.49 15.5 8.72 15.88 8.72 L22.01 8.72 C22.97 8.72 23.36 9.95 22.59 10.52 L17.58 14.16 C17.28 14.38 17.14 14.77 17.26 15.13 L19.17 21 C19.48 21.94 18.41 22.69 17.61 22.11 L12.59 18.47 C12.25 18.22 11.75 18.22 11.41 18.47 L6.39 22.11 C5.59 22.69 4.52 21.94 4.83 21 L6.74 15.13 C6.86 14.77 6.72 14.38 6.42 14.16 L1.41 10.52 C0.64 9.95 1.03 8.72 1.99 8.72 L8.12 8.72 C8.5 8.72 8.83 8.49 8.96 8.13 L10.99 2.32 Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+      <a class="icon-btn" href="/settings" title="设置" aria-label="设置">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- 扫码登录弹窗(登录 B 站账号,不是本站账号体系) -->
+<div class="login-modal-mask" id="loginModalMask" style="display:none;">
+  <div class="login-modal">
+    <button class="login-modal-close" type="button" onclick="closeLoginModal()">&times;</button>
+    <p class="login-modal-title">扫码登录 B 站账号</p>
+    <div class="login-qrcode-box">
+      <img id="loginQrcodeImg" width="180" height="180" alt="登录二维码" />
+      <div class="login-qrcode-mask" id="loginQrcodeMask">
+        <p id="loginQrcodeMaskText"></p>
+        <button class="login-refresh-btn" id="loginRefreshBtn" type="button" onclick="startLoginFlow()">刷新二维码</button>
+      </div>
+    </div>
+    <p class="login-modal-tip">请使用哔哩哔哩客户端扫码登录</p>
+  </div>
+</div>
+
+<div class="content">
+  <div class="section-header">
+    <h2 class="section-title">关注动态</h2>
+    <button class="refresh-btn" id="refreshDynamicBtn" type="button">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      刷新
+    </button>
+  </div>
+  <div id="dynamicList"></div>
+</div>
+
+<!-- 图片预览浮层:点动态里的图片打开,点空白处、关闭按钮或按 Esc 关闭 -->
+<div class="dy-img-mask" id="dyImgMask" onclick="closeDyImage()">
+  <div class="dy-img-viewport">
+    <img id="dyImgFull" src="" alt="" referrerpolicy="no-referrer" draggable="false"
+         onclick="event.stopPropagation(); toggleDyImageZoom(event)" />
+  </div>
+  <!-- 左右箭头只在这条动态有多张图时显示(见 showDyImage)。
+       浮层上的按钮都要 stopPropagation,否则冒泡到浮层上就顺手把预览关了 -->
+  <button class="dy-img-btn dy-img-prev" type="button" title="上一张"
+          onclick="event.stopPropagation(); stepDyImage(-1)">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M15 5L8 12l7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <button class="dy-img-btn dy-img-next" type="button" title="下一张"
+          onclick="event.stopPropagation(); stepDyImage(1)">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <button class="dy-img-btn dy-img-close" type="button" title="关闭"
+          onclick="event.stopPropagation(); closeDyImage()">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <div class="dy-img-count" id="dyImgCount"></div>
+</div>
+
+<div class="page-toast" id="pageToast"></div>
+
+<script src="/common.js"></script>
+<script>
+const dynamicList = document.getElementById('dynamicList');
+const refreshDynamicBtn = document.getElementById('refreshDynamicBtn');
+const SCROLL_LOAD_THRESHOLD_PX = 300; // 与首页一致: 距底部小于这个值就算进入底部区域
+
+let dynamicItems = [];   // 已渲染的动态,按顺序存着,图片查看器要按这个顺序翻
+let dynamicOffset = '';
+let dynamicHasMore = false;
+let dynamicLoading = false;
+let dynamicLoaded = false; // 是否成功拉到过第一页
+let dynamicError = '';
+let nearBottom = false;
+
+function esc(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// 动态标题里没有搜索高亮那种可信 HTML,去标签只为了塞进 title 属性
+function plainText(str) {
+  return String(str == null ? '' : str).replace(/<[^>]*>/g, '');
+}
+
+// 表情名/昵称要拼进正则里当字面量,特殊字符必须转义
+function escapeRegExp(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatCount(n) {
+  const num = Number(n) || 0;
+  if (num >= 100000000) return (num / 100000000).toFixed(1).replace(/\.0$/, '') + '亿';
+  if (num >= 10000) return (num / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(num);
+}
+
+// 图片加载失败就让它透明,别露出浏览器的破图图标(与视频卡片同一处理)
+function imgErrorAttr() {
+  return ' onerror="this.style.opacity=0"';
+}
+
+function imageHTML(img, extraAttrs) {
+  return `<img src="${esc(img.url)}" loading="lazy" alt="" referrerpolicy="no-referrer"${extraAttrs || ''}${imgErrorAttr()} />`;
+}
+
+// 上游给的 pub_time 是"刚刚/3小时前"这类相对时间,直接用;时间戳只进 title 做精确展示
+function absoluteTime(ts) {
+  if (!ts) return '';
+  const d = new Date(Number(ts) * 1000);
+  if (isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function imagesHTML(item) {
+  const list = item.images || [];
+  if (!list.length) return '';
+  const count = Math.min(list.length, 9);
+  const cells = list.slice(0, count).map((img) => {
+    const ratio = img.width > 0 && img.height > 0 ? `${img.width} / ${img.height}` : '1 / 1';
+    const style = count === 1 ? ` style="aspect-ratio: ${ratio}; max-height: 340px;"` : ' style="aspect-ratio: 1 / 1;"';
+    return `<button class="dy-img" type="button"${style}>
+      ${imageHTML(img)}
+    </button>`;
+  }).join('');
+  const more = item.extraImageCount > 0 ? `<div class="dy-img-count">共 ${list.length + item.extraImageCount} 张,这里显示前 ${count} 张</div>` : '';
+  return `<div class="dy-images count-${count}">${cells}</div>${more}`;
+}
+
+// 缩略图上的"播放量 / 弹幕数"与小角标,与首页/个人主页卡片同一套图标与位置
+const PLAY_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M4 4.5C4 3.6 4.99 3.05 5.75 3.52L19.5 12L5.75 20.48C4.99 20.95 4 20.4 4 19.5V4.5Z" fill="currentColor" transform="translate(6.6,6) scale(0.5)"/>
+</svg>`;
+const DANMAKU_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="1.6"/>
+  <line x1="6" y1="9.5" x2="15" y2="9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="6" y1="14.5" x2="18" y2="14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+</svg>`;
+
+function cardHTML(card) {
+  if (!card) return '';
+  if (card.kind === 'video') {
+    const href = card.bvid ? `/player?bv=${encodeURIComponent(card.bvid)}` : `/player?av=${card.aid}`;
+    // 时长压在封面右下角,播放/弹幕数放到卡片信息里(与首页、个人主页一致)
+    const stats = [
+      card.play ? `<span class="stat-item" title="播放">${PLAY_ICON}${esc(card.play)}</span>` : '',
+      card.danmaku ? `<span class="stat-item" title="弹幕">${DANMAKU_ICON}${esc(card.danmaku)}</span>` : '',
+    ].filter(Boolean).join('');
+    const cover = card.cover
+      ? `<span class="dy-card-cover">${imageHTML({ url: card.cover })}
+          ${card.duration ? `<span class="dy-card-dur">${esc(card.duration)}</span>` : ''}
+        </span>`
+      : `<span class="dy-card-cover"></span>`;
+    // 整块卡片就是播放页入口(封面/标题只是卡里的元素),右键新开、中键、状态栏预览都是原生行为
+    return `<a class="dy-card" href="${href}">
+      ${cover}
+      <div class="dy-card-info">
+        <span class="dy-card-title" title="${esc(plainText(card.title))}">${card.title}</span>
+        ${card.desc ? `<span class="dy-card-brief" title="${esc(plainText(card.desc))}">${card.desc}</span>` : ''}
+        ${card.badge ? `<span class="dy-badge">${card.badge}</span>` : ''}
+        ${stats ? `<span class="dy-card-stats">${stats}</span>` : ''}
+      </div>
+    </a>`;
+  }
+
+  if (card.kind === 'article' || card.kind === 'live' || card.kind === 'generic') {
+    const cover = card.cover ? `<span class="dy-card-cover">${imageHTML({ url: card.cover })}</span>` : '';
+    const meta = card.kind === 'live'
+      ? [card.liveState === 1 ? '直播中' : '直播已结束', card.desc].filter(Boolean).join(' · ')
+      : [card.label, card.desc].filter(Boolean).join(' · ');
+    const cls = card.kind === 'live' ? 'dy-card dy-live' : 'dy-card';
+    const inner = `${cover}
+      <div class="dy-card-info">
+        <span class="dy-card-title">${card.title}</span>
+        ${card.badge ? `<span class="dy-badge">${card.badge}</span>` : ''}
+        ${meta ? `<span class="dy-card-desc">${esc(meta)}</span>` : ''}
+      </div>`;
+    // 同视频卡整块可点;专栏/直播/详情页都是站外跳转,带上 noreferrer
+    return card.url
+      ? `<a class="${cls}" href="${esc(card.url)}" rel="noreferrer">${inner}</a>`
+      : `<div class="${cls}">${inner}</div>`;
+  }
+
+  if (card.kind === 'none') {
+    return `<div class="dy-none">${card.tips || '该动态已被删除'}</div>`;
+  }
+  return '';
+}
+
+// 原动态(转发)只给作者 + 文字 + 标题,不往下递归
+function forwardHTML(forward) {
+  if (!forward) return '';
+  const author = forward.author || {};
+  const href = author.mid ? `/account?mid=${author.mid}` : forward.url;
+  const title = forward.card && forward.card.title ? plainText(forward.card.title) : '';
+  return `<div class="dy-forward">
+    <div class="dy-forward-author">@<a href="${esc(href)}"${author.mid ? '' : ' rel="noreferrer"'}>${author.name || '原动态'}</a></div>
+    ${forward.text ? `<div class="dy-text">${forward.text}</div>` : ''}
+    ${title ? `<div class="dy-card-meta">${esc(title)}</div>` : ''}
+  </div>`;
+}
+
+const COMMENT_ICONS = {
+  like: '<path d="M7 22h10a3 3 0 0 0 2.9-2.3l1.6-7A2.6 2.6 0 0 0 19 9.5h-4.2l.8-4.1A2.4 2.4 0 0 0 13.2 2.6L7 12.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 10.5h4V22H3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  likeAction: '<path d="M7 11v9H4a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 11l3.6-7.2a1.8 1.8 0 0 1 3.4.8V9h5.2a2 2 0 0 1 1.94 2.48l-1.5 6.2A2 2 0 0 1 17.7 19H7" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
+  comment: '<path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  forward: '<path d="M17 2l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 6H8a4 4 0 0 0-4 4v1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7 22l-4-4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 18h13a4 4 0 0 0 4-4v-1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+};
+
+function statIcon(key, size = 14) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">${COMMENT_ICONS[key]}</svg>`;
+}
+
+// 底部统计行:点赞是可点的写操作(已点赞时整颗变粉),评论那颗展开评论区,转发仍只读
+function statsHTML(item, index) {
+  const stat = item.stat || {};
+  const statHTML = (key) => `<span class="dy-stat">${statIcon(key)}${formatCount(stat[key])}</span>`;
+  const likeHTML = `<button class="dy-stat-btn dy-like-btn${stat.liked ? ' active' : ''}" type="button"
+      data-dyn-id="${esc(item.id)}" data-liked="${stat.liked ? '1' : ''}"
+      title="${stat.liked ? '取消点赞' : '点赞'}">${statIcon('like')}${formatCount(stat.like)}</button>`;
+  const commentHTML = item.commentType && item.commentOid
+    ? `<button class="dy-stat-btn" type="button" data-comment-toggle="${index}" title="查看评论">
+        ${statIcon('comment')}${formatCount(stat.comment)}
+      </button>`
+    : statHTML('comment');
+  return `<div class="dy-foot">
+    ${likeHTML}${commentHTML}${statHTML('forward')}
+  </div>`;
+}
+
+function itemHTML(item, index) {
+  const author = item.author || {};
+  const avatarHref = author.mid ? `/account?mid=${author.mid}` : item.url;
+  const external = author.mid ? '' : ' rel="noreferrer"';
+  const tags = [
+    item.pinned ? '<span class="dy-tag pink">置顶</span>' : '',
+    item.visible === false ? '<span class="dy-tag">已折叠</span>' : '',
+  ].join('');
+  // 与 B 站一致: "投稿了视频 · 3小时前",相对时间在后
+  const meta = [author.pubAction, author.time || absoluteTime(author.ts)].filter(Boolean).join(' · ');
+  return `<div class="dy-item" data-index="${index}">
+    <div class="dy-head">
+      <a class="dy-avatar" href="${esc(avatarHref)}"${external}>${imageHTML({ url: author.face })}</a>
+      <div class="dy-author">
+        <a class="dy-name" href="${esc(avatarHref)}"${external}>${author.name || '未知用户'}</a>
+        <div class="dy-sub" title="${esc(absoluteTime(author.ts))}"><span>${meta}</span>${tags}</div>
+      </div>
+    </div>
+    <div class="dy-body">
+      ${item.dispute ? `<div class="dy-fold">${item.dispute}</div>` : ''}
+      ${item.text ? `<div class="dy-text">${item.text}</div><button class="dy-more" type="button" style="display:none;">展开全文</button>` : ''}
+      ${imagesHTML(item)}
+      ${cardHTML(item.card)}
+      ${forwardHTML(item.forward)}
+      ${item.foldStatement ? `<div class="dy-fold">${item.foldStatement}</div>` : ''}
+      ${statsHTML(item, index)}
+      ${item.commentType && item.commentOid ? commentsSectionHTML() : ''}
+    </div>
+  </div>`;
+}
+
+/* ----------------------------- 动态点赞 -----------------------------
+ * 点统计行里的"点赞"就是一次真实写操作,失败时按原值回滚(不做乐观更新)。
+ * -------------------------------------------------------------------- */
+
+async function toggleDynamicLike(button) {
+  if (button.disabled) return;
+  const index = itemIndex(button);
+  const item = dynamicItems[index];
+  if (!item) return;
+
+  const nextLiked = !item.stat.liked;
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/action/dynamic-like', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dynId: item.id, like: nextLiked }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.code !== 0) throw new Error(data.message || (nextLiked ? '点赞失败' : '取消点赞失败'));
+
+    item.stat.liked = data.liked;
+    item.stat.like = Math.max(0, item.stat.like + (data.liked ? 1 : -1));
+    button.dataset.liked = data.liked ? '1' : '';
+    button.classList.toggle('active', data.liked);
+    button.title = data.liked ? '取消点赞' : '点赞';
+    button.innerHTML = `${statIcon('like')}${formatCount(item.stat.like)}`;
+  } catch (err) {
+    if (err.message !== '请先登录') showToast(err.message || '点赞失败');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/* ----------------------------- 动态评论点赞 -----------------------------
+ * 评论区里的点赞/取消点赞,走播放页同一个 /api/reply/like。
+ * 图标与计数放在评论的时间那一行(播放页是单独一排灰字按钮,这里只有时间,就并进这一行)。
+ * -------------------------------------------------------------------- */
+
+// 已点赞状态只存在 DOM 的 data-liked 上:列表或评论区整块重画时会回来问接口要新值
+function commentLikeHTML(item) {
+  const liked = !!item.liked;
+  const raw = Number(item.like) || 0;
+  return `<button class="dy-stat-btn dy-comment-like${liked ? ' active' : ''}" type="button"
+      data-comment-like="${esc(item.rpid)}" data-liked="${liked ? '1' : '0'}" data-like-raw="${raw}"
+      title="${liked ? '取消点赞' : '点赞'}">
+      ${statIcon('likeAction', 13)}${formatCount(raw)}
+    </button>`;
+}
+
+async function toggleCommentLike(button, index) {
+  if (button.disabled) return;
+  const item = dynamicItems[index];
+  if (!item || !item.commentType || !item.commentOid) return;
+
+  const nextLiked = button.dataset.liked !== '1';
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/reply/like', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        oid: item.commentOid,
+        type: item.commentType,
+        rpid: button.dataset.commentLike,
+        like: nextLiked,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.code !== 0) throw new Error(data.message || (nextLiked ? '点赞失败' : '取消点赞失败'));
+
+    const raw = Math.max(0, (Number(button.dataset.likeRaw) || 0) + (nextLiked ? 1 : -1));
+    button.dataset.liked = nextLiked ? '1' : '0';
+    button.dataset.likeRaw = String(raw);
+    button.classList.toggle('active', nextLiked);
+    button.title = nextLiked ? '取消点赞' : '点赞';
+    button.innerHTML = `${statIcon('likeAction', 13)}${formatCount(raw)}`;
+  } catch (err) {
+    if (err.message !== '请先登录') showToast(err.message || '点赞失败,请稍后重试');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/* ----------------------------- 动态评论 -----------------------------
+ * 点统计行里的"评论"展开,数据走 /api/reply(type = 动态评论区类型, oid = commentOid)。
+ * 顶层评论按点赞/时间排序,楼层回复点"展开"才拉;两层都能点赞(见上面 commentLikeHTML),
+ * 除此之外没有回复/删除这些写操作。
+ * -------------------------------------------------------------------- */
+
+// 每条动态一份状态,key 是动态在列表里的下标(DOM 里用 data-index 记着同一个下标)
+const commentMap = new Map();
+
+// 评论与楼层回复的骨架屏:与真内容同结构,换成真数据时高度不跳
+function commentSkeletonHTML(count) {
+  return Array.from({ length: count }).map(() => `
+    <div class="dy-comment dy-comment-skeleton">
+      <div class="dy-comment-avatar"></div>
+      <div class="dy-comment-body">
+        <div class="dy-comment-uname"></div>
+        <div class="dy-comment-text"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function subReplySkeletonHTML(count) {
+  return Array.from({ length: count }).map(() => `
+    <div class="dy-sub-reply dy-sub-reply-skeleton">
+      <div class="dy-sub-reply-avatar"></div>
+      <div class="dy-sub-reply-body">
+        <div class="dy-sub-reply-uname"></div>
+        <div class="dy-sub-reply-text"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function commentsSectionHTML() {
+  // 与官网一致,只有最热(仅按热度)和最新(仅按时间)两种排序
+  const tabs = [['2', '最热'], ['0', '最新']]
+    .map(([sort, label]) => `<button class="dy-comment-tab${sort === '2' ? ' active' : ''}" type="button" data-comment-sort="${sort}">${label}</button>`)
+    .join('<span class="dy-comment-sort-divider">|</span>');
+  return `<div class="dy-comments">
+    <div class="dy-comments-head">
+      <div class="dy-comments-title">评论</div>
+      <div class="dy-comment-sort">${tabs}</div>
+    </div>
+    <div class="dy-comment-list">
+      ${commentSkeletonHTML(3)}
+      <div class="dy-comments-empty" style="display:none;"></div>
+      <div class="dy-comments-error" style="display:none;">
+        <span></span>
+        <button class="load-more-btn dy-comments-retry" type="button">重试</button>
+      </div>
+    </div>
+    <div class="dy-comments-more"></div>
+  </div>`;
+}
+
+// 评论区按"这条动态在列表里的下标"定位:统计行里的评论按钮与评论区是兄弟节点,不能用 closest 找
+const dySectionHTML = (index) => dynamicList.querySelector(`.dy-item[data-index="${index}"] .dy-comments`);
+
+function commentItemHTML(item, isTop) {
+  const href = item.mid ? `/account?mid=${item.mid}` : '';
+  const link = href ? ` href="${href}"` : '';
+  const avatar = item.avatar ? imageHTML({ url: item.avatar }) : '';
+  // 置顶评论(UP 主/管理员置顶)不按点赞排,得标出来,不然最上面那条看着像排错了
+  const topBadge = isTop ? '<span class="dy-comment-top-badge">置顶</span>' : '';
+  // 楼层回复默认收起,点"展开N条回复"才去拉(与播放页评论区同一交互)
+  const replies = item.rcount
+    ? `<button class="dy-comment-more-btn" type="button" data-sub-toggle="${item.rpid}" data-sub-total="${item.rcount}">展开${formatCount(item.rcount)}条回复</button>
+       <div class="dy-sub-replies" data-sub-root="${item.rpid}" style="display:none;"></div>`
+    : '';
+  return `<div class="dy-comment">
+    <a class="dy-comment-avatar"${link}>${avatar}</a>
+    <div class="dy-comment-body">
+      <a class="dy-comment-uname"${link}>${esc(item.uname || '匿名用户')}</a>${topBadge}
+      <div class="dy-comment-text">${renderCommentText(item)}</div>
+      <div class="dy-comment-meta">
+        <span>${esc(absoluteTime(item.ctime))}</span>
+        ${commentLikeHTML(item)}
+      </div>
+      ${replies}
+    </div>
+  </div>`;
+}
+
+function subReplyHTML(item) {
+  const href = item.mid ? `/account?mid=${item.mid}` : '';
+  const link = href ? ` href="${href}"` : '';
+  const avatar = item.avatar ? imageHTML({ url: item.avatar }) : '';
+  return `<div class="dy-sub-reply">
+    <a class="dy-sub-reply-avatar"${link}>${avatar}</a>
+    <div class="dy-sub-reply-body">
+      <a class="dy-sub-reply-uname"${link}>${esc(item.uname || '匿名用户')}</a>
+      <div class="dy-sub-reply-text">${renderCommentText(item)}</div>
+      <div class="dy-sub-reply-meta">
+        <span>${esc(absoluteTime(item.ctime))}</span>
+        ${commentLikeHTML(item)}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderComments(section, index, { reset = false } = {}) {
+  const state = commentMap.get(index);
+  if (!section || !state || state.loading) return;
+  // 第一次就没拉到(没有内容可画)也要继续,否则骨架屏一直转、错误和重试显示不出来
+  if (!state.loaded && !state.error) return;
+
+  const listEl = section.querySelector('.dy-comment-list');
+  // 换排序/重试整体重画,加载更多只往后追加,免得已经展开的楼层回复被冲掉
+  if (reset) {
+    listEl.querySelectorAll('.dy-comment').forEach((el) => el.remove());
+    state.rendered = new Set();
+  }
+
+  // 置顶评论先占住去重集合:上游偶尔会把它同时放进 replies 里
+  const top = reset && state.top ? commentItemHTML(state.top, true) : '';
+  if (reset && state.top && state.top.rpid) state.rendered.add(String(state.top.rpid));
+  const fresh = state.list.filter((c) => !state.rendered.has(String(c.rpid)));
+  fresh.forEach((c) => state.rendered.add(String(c.rpid)));
+  const list = fresh.map((c) => commentItemHTML(c)).join('');
+
+  // 出错时只显示错误那一行,不显示"还没有评论"
+  const empty = !state.error && !state.rendered.size;
+  const emptyEl = listEl.querySelector('.dy-comments-empty');
+  emptyEl.style.display = empty ? '' : 'none';
+  if (empty) emptyEl.textContent = state.total ? '这里的评论暂时看不到' : '还没有评论';
+
+  const errorEl = listEl.querySelector('.dy-comments-error');
+  errorEl.style.display = state.error ? '' : 'none';
+  if (state.error) errorEl.querySelector('span').textContent = state.error;
+
+  listEl.insertAdjacentHTML('beforeend', top + list);
+  if (state.loaded) section.querySelector('.dy-comments-title').textContent = `评论 ${formatCount(state.total)}`;
+  section.querySelector('.dy-comments-more').innerHTML = state.more
+    ? '<button class="load-more-btn dy-comments-more-btn" type="button">加载更多评论</button>'
+    : '';
+}
+
+// 正文渲染: 与服务端 mapComment 的产出对齐——message 是纯文本,emoji 是"表情名 -> {url,size}",
+// members 是 @ 到的人。全部先转义再拼,只有这里自己产出的 <img>/<a> 是可信标签
+function renderCommentText(item) {
+  let html = esc(item.message || '');
+  const emoji = item.emoji || {};
+  const names = Object.keys(emoji).sort((a, b) => b.length - a.length);
+  if (names.length) {
+    const re = new RegExp('\\[(' + names.map(escapeRegExp).join('|') + ')\\]', 'g');
+    html = html.replace(re, (whole, name) => {
+      const e = emoji[name] || {};
+      const big = e.size === 2 ? ' big' : '';
+      return `<img class="dy-comment-emoji${big}" src="${esc(e.url || '')}" alt="${esc(whole)}" loading="lazy" referrerpolicy="no-referrer" />`;
+    });
+  }
+  const members = (item.members || []).filter((m) => m.uname).sort((a, b) => b.uname.length - a.uname.length);
+  if (members.length) {
+    const midOf = {};
+    for (const m of members) midOf[m.uname] = m.mid;
+    const re = new RegExp('@(' + members.map((m) => escapeRegExp(m.uname)).join('|') + ')', 'g');
+    html = html.replace(re, (whole, name) => {
+      const mid = midOf[name];
+      return mid ? `<a href="/account?mid=${encodeURIComponent(mid)}">@${esc(name)}</a>` : whole;
+    });
+  }
+  return html.replace(/\n/g, '<br />') + commentPicsHTML(item);
+}
+
+// 评论附图:单图保持原比例(带宽高时按原比例占位,加载完不跳版),多图统一切成方形;点开走本页的大图预览
+function commentPicsHTML(item) {
+  const pics = item.pictures || [];
+  if (!pics.length) return '';
+  const multi = pics.length > 1;
+  const cells = pics.map((p) => {
+    const size = !multi && p.width > 0 && p.height > 0 ? ` width="${p.width}" height="${p.height}"` : '';
+    return `<button class="dy-img" type="button">${imageHTML({ url: p.src }, size)}</button>`;
+  }).join('');
+  return `<div class="dy-comment-pics${multi ? ' is-multi' : ''}">${cells}</div>`;
+}
+
+async function loadComments(section, index, { reset = false } = {}) {
+  const item = dynamicItems[index];
+  if (!section || !item || !item.commentType || !item.commentOid) return;
+
+  let state = commentMap.get(index);
+  if (!state) {
+    state = { list: [], top: null, total: 0, next: 0, more: false, sort: '2', loading: false, loaded: false, error: '', rendered: new Set() };
+    commentMap.set(index, state);
+  }
+  if (state.loading) return;
+  if (reset) {
+    state.list = [];
+    state.top = null;
+    state.total = 0;
+    state.next = 0;
+    state.more = false;
+    state.loaded = false;
+    state.error = '';
+    state.rendered = new Set();
+  }
+  state.loading = true;
+
+  try {
+    const query = new URLSearchParams({
+      oid: item.commentOid,
+      type: String(item.commentType),
+      sort: state.sort,
+      next: String(state.next),
+    });
+    const res = await fetch(`/api/reply?${query.toString()}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '评论加载失败,请稍后重试');
+
+    state.list = state.list.concat(data.list || []);
+    state.top = reset ? data.top : state.top;
+    state.total = data.total || 0;
+    state.next = data.next || 0;
+    state.more = !data.isEnd;
+    state.loaded = true;
+    state.error = '';
+  } catch (err) {
+    state.error = err.message || '评论加载失败,请稍后重试';
+  } finally {
+    state.loading = false;
+    if (isUserLoggedIn) renderComments(section, index, { reset });
+  }
+}
+
+// 楼层回复的展开/收起:第一次展开才请求,收起来再展开直接复用(与播放页同一交互)
+async function toggleSubReplies(button, index) {
+  const box = button.nextElementSibling;
+  if (!box) return;
+  if (box.style.display !== 'none') {
+    box.style.display = 'none';
+    button.textContent = `展开${formatCount(button.dataset.subTotal)}条回复`;
+    return;
+  }
+  box.style.display = 'flex';
+  button.textContent = '收起回复';
+  if (!box.dataset.page) await loadSubReplies(index, box);
+}
+
+// 拉某一楼的回复:pn=1 是首次展开,之后是"查看更多回复"的翻页
+async function loadSubReplies(index, box) {
+  const item = dynamicItems[index];
+  const root = box.dataset.subRoot;
+  if (!item || !root || box.dataset.loading) return;
+  const page = Number(box.dataset.page) || 1;
+  box.dataset.loading = '1';
+  if (page === 1) box.innerHTML = subReplySkeletonHTML(2);
+  try {
+    const query = new URLSearchParams({
+      oid: item.commentOid,
+      type: String(item.commentType),
+      root,
+      pn: String(page),
+    });
+    const res = await fetch(`/api/reply/replies?${query.toString()}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '回复加载失败,请稍后重试');
+
+    const list = data.list || [];
+    const items = list.map(subReplyHTML).join('');
+    if (page === 1) box.innerHTML = items || '<div class="dy-sub-reply">没有更多回复</div>';
+    else box.insertAdjacentHTML('beforeend', items);
+    box.dataset.page = String(page + 1);
+    box.dataset.loaded = String((Number(box.dataset.loaded) || 0) + list.length);
+
+    // "查看更多回复"始终留在最下面,每次都先去掉旧的再加新的
+    const oldMore = box.querySelector('.dy-sub-reply-more');
+    if (oldMore) oldMore.remove();
+    if (list.length && Number(box.dataset.loaded) < (data.total || 0)) {
+      box.insertAdjacentHTML('beforeend', '<button class="dy-comment-more-btn dy-sub-reply-more" type="button">查看更多回复</button>');
+    }
+  } catch (err) {
+    const html = `<div class="dy-comments-error">${esc(err.message || '回复加载失败,请稍后重试')}</div>`;
+    if (page === 1) box.innerHTML = html;
+    else box.insertAdjacentHTML('beforeend', html);
+    box.dataset.page = '';
+  } finally {
+    box.dataset.loading = '';
+  }
+}
+
+// 评论按钮在统计行里,点它展开/收起同一张卡片下面的评论块;首次展开才拉数据
+async function openComments(toggle) {
+  const index = Number(toggle.dataset.commentToggle);
+  const section = dySectionHTML(index);
+  if (!section) return;
+  if (!section.classList.toggle('open')) return;
+  const state = commentMap.get(index);
+  if (!state || !state.loaded) await loadComments(section, index, { reset: true });
+}
+
+function skeletonHTML(count) {
+  return Array.from({ length: count }).map(() => `
+    <div class="dy-item skeleton-item">
+      <div class="skeleton-head">
+        <div class="skeleton-avatar skeleton-line"></div>
+        <div class="skeleton-meta">
+          <div class="skeleton-line" style="width:30%"></div>
+          <div class="skeleton-line" style="width:20%"></div>
+        </div>
+      </div>
+      <div class="skeleton-body">
+        <div class="skeleton-line" style="width:92%"></div>
+        <div class="skeleton-line" style="width:70%"></div>
+        <div class="skeleton-line skeleton-image"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// 正文被 CSS 截到 6 行时才给"展开全文":得等布局完成才量得准
+function setupTextToggles(root) {
+  root.querySelectorAll('.dy-text').forEach((el) => {
+    const button = el.nextElementSibling;
+    if (!button || !button.classList.contains('dy-more')) return;
+    if (el.scrollHeight > el.clientHeight + 2) button.style.display = '';
+  });
+}
+
+function render() {
+  if (!dynamicItems.length) {
+    dynamicList.innerHTML = `<div class="placeholder">还没有动态,去关注几个 UP 主吧</div>`;
+    return;
+  }
+  // 列表整个重画,之前展开的评论块(按 data-index 记状态)不能再留着
+  commentMap.clear();
+  dynamicList.innerHTML = dynamicItems.map((item, index) => itemHTML(item, index)).join('');
+  setupTextToggles(dynamicList);
+  if (dynamicHasMore) {
+    dynamicList.insertAdjacentHTML('beforeend', `<div class="load-more-row"><button class="load-more-btn" type="button">加载更多</button></div>`);
+  }
+}
+
+function loginPlaceholder() {
+  dynamicList.innerHTML = `<div class="placeholder">
+    <p>登录后可查看关注动态</p>
+    <button class="placeholder-btn" type="button" onclick="openLoginModal()">登录</button>
+  </div>`;
+}
+
+function errorPlaceholder() {
+  dynamicList.innerHTML = `<div class="error-box">
+    <p>${esc(dynamicError || '加载动态失败,请稍后重试')}</p>
+    <button class="load-more-btn" type="button" id="retryBtn">重试</button>
+  </div>`;
+  const retry = document.getElementById('retryBtn');
+  if (retry) retry.addEventListener('click', () => loadDynamic({ reset: true }));
+}
+
+async function loadDynamic({ reset = false } = {}) {
+  if (dynamicLoading) return;
+  if (!reset && !dynamicHasMore) return;
+  dynamicLoading = true;
+
+  // 结束请求时统一收尾;登录态在请求期间变了就把加载中的状态丢掉,结果不再上屏
+  const finish = () => {
+    dynamicLoading = false;
+    refreshDynamicBtn.classList.remove('spinning');
+    if (isUserLoggedIn) {
+      render();
+      maybeRefill();
+    }
+  };
+
+  if (reset) {
+    dynamicOffset = '';
+    dynamicHasMore = false;
+    dynamicError = '';
+    dynamicItems = [];
+    dynamicLoaded = false;
+    dynamicList.innerHTML = skeletonHTML(3);
+    refreshDynamicBtn.classList.add('spinning');
+  } else {
+    // 追加时撤掉"加载更多":列表整体重画,留着会重复,撤掉还能当"正在加载"的反馈
+    const row = dynamicList.querySelector('.load-more-row');
+    if (row) row.remove();
+  }
+
+  try {
+    const query = dynamicOffset ? `?offset=${encodeURIComponent(dynamicOffset)}` : '';
+    const res = await fetch(`/api/dynamics${query}`);
+    const data = await res.json();
+    if (!res.ok || data.code !== 0) throw new Error(data.message || '加载动态失败,请稍后重试');
+
+    const list = data.list || [];
+    // 请求在路上时登录态可能已经变了(退出/换号),这时结果不能再往列表上画
+    if (!isUserLoggedIn) return;
+    dynamicItems = reset ? list : dynamicItems.concat(list);
+    dynamicOffset = data.offset || '';
+    dynamicHasMore = !!data.hasMore;
+    dynamicLoaded = true;
+    dynamicError = '';
+  } catch (err) {
+    dynamicError = err.message || '加载动态失败,请稍后重试';
+    if (!isUserLoggedIn) return;
+    if (!dynamicItems.length) {
+      dynamicHasMore = false;
+      errorPlaceholder();
+      return;
+    }
+    showToast(dynamicError);
+  } finally {
+    finish();
+  }
+}
+
+// 停在底部、且这一页没把视口填满时才继续拉,避免"永远到底"的循环
+function maybeRefill() {
+  if (dynamicLoading || !dynamicHasMore) return;
+  const gapToBottom = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+  if (gapToBottom < SCROLL_LOAD_THRESHOLD_PX) setTimeout(() => loadDynamic({ append: true }), 80);
+}
+
+function maybeLoadMoreOnScroll() {
+  const gapToBottom = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+  const atBottom = gapToBottom < SCROLL_LOAD_THRESHOLD_PX;
+  const enteredBottom = atBottom && !nearBottom;
+  nearBottom = atBottom;
+  if (enteredBottom && !dynamicLoading) loadDynamic({ append: true });
+}
+
+window.addEventListener('scroll', maybeLoadMoreOnScroll, { passive: true });
+
+// 评论相关的操作都挂在某一条动态上:从被点的元素往上找 .dy-item,它的 data-index
+// 就是这条动态在列表里的下标(与 commentMap 的 key 一致)
+const itemIndex = (el) => Number(el.closest('.dy-item').dataset.index);
+
+dynamicList.addEventListener('click', (e) => {
+  const more = e.target.closest('.dy-more');
+  if (more) {
+    more.previousElementSibling.classList.add('expanded');
+    more.remove();
+    return;
+  }
+  // 评论里的点赞:靠 data-comment-like 认,不能用 .dy-like-btn —— 那个是页脚"动态点赞"的标记,
+  // 评论按钮也带上它的话,这里的顺序会让点评论的赞变成点动态的赞
+  const commentLike = e.target.closest('[data-comment-like]');
+  if (commentLike) {
+    toggleCommentLike(commentLike, itemIndex(commentLike));
+    return;
+  }
+  // 动态点赞:统计行里的那颗按钮,成功才更新计数
+  const likeBtn = e.target.closest('.dy-like-btn');
+  if (likeBtn) {
+    toggleDynamicLike(likeBtn);
+    return;
+  }
+  // 评论相关:展开/收起评论块、换排序、加载更多评论、展开楼层回复、失败重试
+  const toggle = e.target.closest('[data-comment-toggle]');
+  if (toggle) {
+    openComments(toggle);
+    return;
+  }
+  const sortBtn = e.target.closest('[data-comment-sort]');
+  if (sortBtn) {
+    const index = itemIndex(sortBtn);
+    const section = dySectionHTML(index);
+    const state = commentMap.get(index);
+    if (!section || !state || sortBtn.dataset.commentSort === state.sort) return;
+    state.sort = sortBtn.dataset.commentSort;
+    section.querySelectorAll('.dy-comment-tab').forEach((el) => el.classList.toggle('active', el === sortBtn));
+    loadComments(section, index, { reset: true });
+    return;
+  }
+  const moreComments = e.target.closest('.dy-comments-more-btn');
+  if (moreComments) {
+    const index = itemIndex(moreComments);
+    loadComments(dySectionHTML(index), index, { reset: false });
+    return;
+  }
+  const retryComments = e.target.closest('.dy-comments-retry');
+  if (retryComments) {
+    const index = itemIndex(retryComments);
+    loadComments(dySectionHTML(index), index, { reset: true });
+    return;
+  }
+  // 楼层回复的"查看更多回复":继续拉这一楼的下一页
+  const subMore = e.target.closest('.dy-sub-reply-more');
+  if (subMore) {
+    loadSubReplies(itemIndex(subMore), subMore.closest('.dy-sub-replies'));
+    return;
+  }
+  const subToggle = e.target.closest('[data-sub-toggle]');
+  if (subToggle) {
+    toggleSubReplies(subToggle, itemIndex(subToggle));
+    return;
+  }
+  if (e.target.closest('.load-more-btn')) {
+    loadDynamic();
+    return;
+  }
+  const image = e.target.closest('.dy-img');
+  if (image) openDyImage(image);
+});
+
+/* ------------------------ 图片预览:点击查看大图 ------------------------
+ * 与播放页的评论附图预览完全一致(遮罩 + 视口 + 左右切换 + 点图缩放 + 拖拽/滚轮),
+ * 只在命名上加了 Dy 前缀、用页面自己的元素 id,两页互不影响。
+ * -------------------------------------------------------------------- */
+
+// 这次预览能左右切换的图片列表和当前下标;只覆盖同一条动态里的图,关掉浮层就清空
+let dyImgList = [];
+let dyImgIndex = 0;
+
+// 缩略图点开后铺一层全屏遮罩看原图,点遮罩或按 Esc(见下面的 keydown)关闭
+function openDyImage(pic) {
+  // 同一条动态(或同一条评论)的图同属一个容器,按 DOM 顺序当作切换列表
+  const pics = [...pic.closest('.dy-images, .dy-comment-pics').querySelectorAll('.dy-img img')];
+  dyImgList = pics.map((el) => el.src);
+  dyImgIndex = pics.indexOf(pic.querySelector('img'));
+  document.getElementById('dyImgMask').classList.add('show');
+  showDyImage();
+}
+
+// 上一张/下一张,到头绕回另一端
+function stepDyImage(step) {
+  if (dyImgList.length < 2) return;
+  dyImgIndex = (dyImgIndex + step + dyImgList.length) % dyImgList.length;
+  showDyImage();
+}
+
+// 原图尺寸 ÷ 适应窗口后的尺寸:<= 1 说明这张图本来就没超出可视区域,没得放大
+function dyImageFullScale() {
+  const img = document.getElementById('dyImgFull');
+  return img.naturalWidth && img.offsetWidth ? img.naturalWidth / img.offsetWidth : 1;
+}
+
+// 加载完才知道要不要给放大:不用放大的那张,光标提示成"退出预览"(见 .is-small)
+document.getElementById('dyImgFull').addEventListener('load', (e) => {
+  e.currentTarget.classList.toggle('is-small', dyImageFullScale() <= 1);
+});
+
+// 点图片本身:能放大就切换放大/恢复(焦点是点击的位置),本来就放不了大的就直接退出预览
+function toggleDyImageZoom(e) {
+  // 拖动结束紧跟的那次 click 不算"点一下",否则刚拖完就把缩放切回去了
+  if (dyImgDragged) return;
+  const img = document.getElementById('dyImgFull');
+  const full = dyImageFullScale();
+  if (full <= 1) {
+    closeDyImage();
+    return;
+  }
+  // 过渡只该发生在切换缩放的这一刻,先把"瞬时"去掉,再改 transform
+  img.classList.remove('is-instant');
+  if (document.getElementById('dyImgMask').classList.toggle('is-zoomed')) {
+    // 此刻还没有 transform,量到的就是适应窗口下的位置
+    const box = img.getBoundingClientRect();
+    dyImgScale = Math.min(full, dyImgMaxZoom);
+    // 点击点相对图片中心的偏移,缩放后会跑到 k 倍处,补一个 (1-k) 倍的位移把它按回原地
+    const dx = e.clientX - (box.left + box.width / 2);
+    const dy = e.clientY - (box.top + box.height / 2);
+    dyImgFocus = { x: dx * (1 - dyImgScale), y: dy * (1 - dyImgScale) };
+    // 从图片靠边的位置放大时,上面这个补偿可能把图片推出贴边范围,先按边界收一下
+    dyImgPan = clampDyImagePan({ x: 0, y: 0 }, 0);
+  } else {
+    dyImgScale = 1;
+    dyImgFocus = { x: 0, y: 0 };
+    dyImgPan = { x: 0, y: 0 };
+  }
+  applyDyImageTransform();
+}
+
+function showDyImage() {
+  const multi = dyImgList.length > 1;
+  const mask = document.getElementById('dyImgMask');
+  mask.classList.toggle('is-multi', multi);
+  // 换图就回到适应窗口,不把上一张的缩放和位置带过来
+  mask.classList.remove('is-zoomed');
+  resetDyImageTransform();
+  document.getElementById('dyImgFull').src = dyImgList[dyImgIndex] || '';
+  document.getElementById('dyImgCount').textContent = multi ? `${dyImgIndex + 1}/${dyImgList.length}` : '';
+}
+
+function closeDyImage() {
+  // 在空白处拖动图片,松手紧跟的那次 click 不算"点空白关闭",否则刚拖完浮层就没了
+  if (dyImgDragged) return;
+  const mask = document.getElementById('dyImgMask');
+  if (!mask.classList.contains('show')) return;
+  // 缩放位置和 src 一样都留到下次打开时再复位(见 showDyImage):
+  // 现在复位的话,浮层还在淡出就会闪一下恢复成适应窗口大小的图片
+  mask.classList.remove('show');
+  dyImgList = [];
+  dyImgIndex = 0;
+}
+
+// 放大态的位置 = 拖拽/滚轮的位移 + 缩放焦点补偿
+let dyImgPan = { x: 0, y: 0 };
+let dyImgFocus = { x: 0, y: 0 };
+let dyImgScale = 1;
+let dyImgDrag = null;
+let dyImgDragged = false;
+// 越界后只跟手这么多,拖起来才有阻尼感(松手由 settleDyImagePan 收回贴边)
+const dyImgDamping = 0.3;
+// 最大放大倍数:长图按"原图尺寸"放大能到七八倍,封个顶,手感接近官网
+const dyImgMaxZoom = 3;
+
+function applyDyImageTransform() {
+  const x = dyImgPan.x + dyImgFocus.x;
+  const y = dyImgPan.y + dyImgFocus.y;
+  document.getElementById('dyImgFull').style.transform =
+    `translate(${x}px, ${y}px) scale(${dyImgScale})`;
+}
+
+// 位移的极限:图片比视口大时最远只能挪到贴边(图片边缘对齐屏幕边缘,图片中心最多偏出 (图-屏)/2);
+// 图片比视口小时它本来就全在屏幕里,只能停在居中
+function dyImageLimit() {
+  const img = document.getElementById('dyImgFull');
+  const w = img.offsetWidth * dyImgScale;
+  const h = img.offsetHeight * dyImgScale;
+  return {
+    x: Math.max(0, (w - dyImgViewport.clientWidth) / 2),
+    y: Math.max(0, (h - dyImgViewport.clientHeight) / 2),
+  };
+}
+
+// 把位移收进贴边范围:超出贴边的部分按 damping 衰减(0 就是硬边界,滚轮和回位都用它)
+function clampDyImagePan(pan, damping) {
+  const limit = dyImageLimit();
+  // 实际位移是"焦点补偿 + 拖拽位移",所以边界按总和算,再换算回拖拽位移
+  const axis = (value, focus, max) => {
+    const total = value + focus;
+    const over = Math.abs(total) - max;
+    const kept = over > 0 ? Math.sign(total) * (max + over * damping) : total;
+    return kept - focus;
+  };
+  return {
+    x: axis(pan.x, dyImgFocus.x, limit.x),
+    y: axis(pan.y, dyImgFocus.y, limit.y),
+  };
+}
+
+// 松手后越界了(拖拽是不限越界的)就平滑退回贴边位置:去掉"瞬时"让 transform 走过渡
+function settleDyImagePan() {
+  const settled = clampDyImagePan(dyImgPan, 0);
+  if (settled.x === dyImgPan.x && settled.y === dyImgPan.y) return;
+  document.getElementById('dyImgFull').classList.remove('is-instant');
+  dyImgPan = settled;
+  applyDyImageTransform();
+}
+
+function resetDyImageTransform() {
+  document.getElementById('dyImgFull').classList.add('is-instant');
+  dyImgDrag = null;
+  dyImgDragged = false;
+  dyImgPan = { x: 0, y: 0 };
+  dyImgFocus = { x: 0, y: 0 };
+  dyImgScale = 1;
+  applyDyImageTransform();
+}
+
+// 预览期间不让动态页跟着滚(wheel 要 non-passive 才能 preventDefault);
+// 放大后滚轮改成滚动图片本身,滚轮一点越界都不给,到头就停住
+document.getElementById('dyImgMask').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (!document.getElementById('dyImgMask').classList.contains('is-zoomed')) return;
+  document.getElementById('dyImgFull').classList.add('is-instant');
+  dyImgPan = clampDyImagePan(
+    { x: dyImgPan.x - e.deltaX, y: dyImgPan.y - e.deltaY }, 0);
+  applyDyImageTransform();
+}, { passive: false });
+
+// 放大后按住浮层里任何地方都能拖动图片(包括空白处);
+// 只"点一下"没拖动时,空白处仍是关闭、图片上仍是切换缩放
+const dyImgViewport = document.querySelector('.dy-img-viewport');
+dyImgViewport.addEventListener('pointerdown', (e) => {
+  if (!document.getElementById('dyImgMask').classList.contains('is-zoomed')) return;
+  document.getElementById('dyImgFull').classList.add('is-instant');
+  dyImgDrag = {
+    x: e.clientX,
+    y: e.clientY,
+    panX: dyImgPan.x,
+    panY: dyImgPan.y,
+    // 手指比鼠标抖得多,阈值放宽一点,否则"点一下"容易被判成拖动
+    threshold: e.pointerType === 'touch' ? 10 : 5,
+  };
+  dyImgDragged = false;
+});
+
+document.addEventListener('pointermove', (e) => {
+  if (!dyImgDrag) return;
+  const dx = e.clientX - dyImgDrag.x;
+  const dy = e.clientY - dyImgDrag.y;
+  // 位移超过这个阈值才算"拖动",否则松手时按"点一下"处理(关闭浮层/切换缩放)
+  if (Math.abs(dx) > dyImgDrag.threshold || Math.abs(dy) > dyImgDrag.threshold) {
+    dyImgDragged = true;
+  }
+  // 拖拽不设硬边界,越界部分按阻尼衰减,松手后由 settleDyImagePan 收回贴边位置
+  dyImgPan = clampDyImagePan(
+    { x: dyImgDrag.panX + dx, y: dyImgDrag.panY + dy }, dyImgDamping);
+  applyDyImageTransform();
+});
+
+// click 紧跟 pointerup 同步派发,标记留到 setTimeout 里再清:
+// 既能吃掉这次 click,也不会让下一次真正的点击被误吞
+document.addEventListener('pointerup', () => {
+  if (!dyImgDrag) return;
+  dyImgDrag = null;
+  settleDyImagePan();
+  setTimeout(() => { dyImgDragged = false; }, 0);
+});
+document.addEventListener('pointercancel', () => {
+  dyImgDrag = null;
+  dyImgDragged = false;
+  settleDyImagePan();
+});
+
+// 旋屏/窗口尺寸变了,贴边边界跟着变,把越界的部分按新边界收回
+window.addEventListener('resize', () => {
+  if (!document.getElementById('dyImgMask').classList.contains('show')) return;
+  settleDyImagePan();
+});
+
+// Esc 关掉预览;左右方向键在多张图之间切换
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeDyImage();
+    return;
+  }
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && dyImgList.length) {
+    stepDyImage(e.key === 'ArrowLeft' ? -1 : 1);
+  }
+});
+
+/* ----------------------------- 搜索框 ----------------------------- */
+
+const form = document.getElementById('searchForm');
+const input = document.getElementById('keyword');
+
+function goSearch(keyword) {
+  window.location.href = `/search?keyword=${encodeURIComponent(keyword)}`;
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const keyword = input.value.trim();
+  if (!keyword) return;
+  addHistory(keyword);
+  hideHistoryDropdown();
+  goSearch(keyword);
+});
+
+function showToast(text, durationMs) {
+  const toast = document.getElementById('pageToast');
+  if (!toast) return;
+  toast.textContent = text;
+  toast.classList.add('show');
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => toast.classList.remove('show'), durationMs || 4000);
+}
+
+/* ----------------------------- 登录态 ----------------------------- */
+
+// 登录态快照:renderLoginSlot 每次刷新都会调 onLoginStateChanged(含页面加载完 1.5s 的
+// 那次校验),只有"真的登录/退出/换号"才该丢掉列表并重新拉取。
+// 初值 null = 还没问过登录态,首次回调一律当"变化"处理:未登录时那一下要画出登录提示
+let loginSnapshot = null;
+let loginUid = null;
+
+// 列表内容属于某个账号:登录态一变就整个丢掉,不能把上一个账号的动态留在屏幕上
+function resetDynamicState() {
+  dynamicItems = [];
+  dynamicHasMore = false;
+  dynamicLoaded = false;
+  dynamicOffset = '';
+  dynamicError = '';
+  dynamicList.innerHTML = '';
+  loginPlaceholder();
+}
+
+function onLoginStateChanged(state) {
+  const uid = (state && state.uid) ?? null;
+  const changed = isUserLoggedIn !== loginSnapshot || (isUserLoggedIn && uid !== loginUid);
+  loginSnapshot = isUserLoggedIn;
+  loginUid = isUserLoggedIn ? uid : null;
+  if (!changed) return;
+
+  resetDynamicState();
+  if (isUserLoggedIn) loadDynamic({ reset: true });
+}
+
+function onUnauthorized(message) {
+  loginSnapshot = false;
+  loginUid = null;
+  resetDynamicState();
+  if (message) showToast(message);
+}
+
+function afterLoginSuccess() {
+  loadDynamic({ reset: true });
+}
+
+refreshDynamicBtn.addEventListener('click', () => loadDynamic({ reset: true }));
+
+// 未登录时不请求必然 401 的接口,先问登录态:画"登录后可查看关注动态"还是拉第一页,
+// 都由 onLoginStateChanged 的首次回调决定
+refreshLoginStatus();
+startLoginWatch();
+// 页面加载完后再确认一次上游登录态: 此时右上角已渲染,不会出现"登录/头像"闪烁,
+// 登录已失效时用户一进页面就能看到"登录"按钮,不必等第一次巡检
+setTimeout(() => refreshLoginStatus({ verify: true }), 1500);
+</script>
+
+</body>
+</html>

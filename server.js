@@ -1,8 +1,8 @@
 // B 站搜索 + 播放 一体化代理服务: 一个进程、一个端口同时提供页面与 API。
-// 页面: / 首页、/search 搜索、/player 播放、/account 个人主页、/settings 设置
+// 页面: / 首页、/search 搜索、/player 播放、/dynamic 动态、/account 个人主页、/settings 设置
 // 接口: /api/search /api/suggest /api/play /api/info /api/related /api/danmaku
 //       /api/reply* /api/emote/panel /api/recommend /api/up/* /api/space/videos
-//       /api/account/* /api/action/* /api/login/*
+//       /api/dynamics /api/account/* /api/action/* /api/login/*
 //
 // B 站接口会校验 Referer / User-Agent,并要求匿名 buvid3 cookie,否则返回 412,
 // 所以统一由服务端转发,匿名 cookie 全局共用一份并缓存。
@@ -2127,13 +2127,19 @@ function mapComment(item) {
 
 app.get("/api/reply", async (req, res) => {
   const oidRaw = (req.query.oid || "").toString().trim();
-  const oid = oidRaw ? parseInt(oidRaw, 10) : 0;
+  // oid 原样当字符串传上游:动态的 oid 是 19 位雪花 id,超过 JS 安全整数,parseInt 会把它抹平
+  const oid = /^\d{1,20}$/.test(oidRaw) ? oidRaw : "";
   const pn = parseInt(req.query.pn, 10) || 1; // 只在退回老接口时用
   const next = parseInt(req.query.next, 10) || 0; // 新接口游标,第一页传 0
   const seekRpid = (req.query.seek_rpid || "").toString().trim();
 
   let sort = (req.query.sort || "").toString().trim();
   if (!VALID_COMMENT_SORTS.has(sort)) sort = "2";
+
+  // 评论区类型,默认 1 = 视频稿件;动态页传 17 = 动态、11 = 相簿、12 = 专栏等,
+  // 取值范围见上游类型表,这里只做"正整数且不夸张"的防护
+  const typeNum = parseInt(req.query.type, 10);
+  const type = Number.isInteger(typeNum) && typeNum > 0 && typeNum < 1000 ? String(typeNum) : "1";
 
   if (!oid) {
     return res.status(400).json({ error: "缺少 oid 参数(需要数字 av 号,可从 /api/info 的 aid 字段获取)" });
@@ -2144,8 +2150,8 @@ app.get("/api/reply", async (req, res) => {
   // 主路径: 官网同款新接口。报错/被风控才往下走老接口兜底。
   try {
     const params = {
-      oid: String(oid),
-      type: "1",
+      oid,
+      type,
       mode: COMMENT_MODE_BY_SORT[sort],
       next: String(next),
       ps: String(COMMENT_PAGE_SIZE),
@@ -2185,8 +2191,8 @@ app.get("/api/reply", async (req, res) => {
   // 兜底路径: 老接口。列表有缓存延迟,但至少能保证评论区打得开。
   try {
     const url = new URL("https://api.bilibili.com/x/v2/reply");
-    url.searchParams.set("type", "1"); // 1 = 视频
-    url.searchParams.set("oid", String(oid));
+    url.searchParams.set("type", type);
+    url.searchParams.set("oid", oid);
     url.searchParams.set("pn", String(pn));
     url.searchParams.set("ps", String(COMMENT_PAGE_SIZE));
     url.searchParams.set("sort", sort);
@@ -2233,7 +2239,8 @@ const SUB_REPLY_PAGE_SIZE = 10;
 
 app.get("/api/reply/replies", async (req, res) => {
   const oidRaw = (req.query.oid || "").toString().trim();
-  const oid = oidRaw ? parseInt(oidRaw, 10) : 0;
+  // 同 /api/reply: oid 是字符串(动态的 oid 可能超过 JS 安全整数)
+  const oid = /^\d{1,20}$/.test(oidRaw) ? oidRaw : "";
   const rootRaw = (req.query.root || "").toString().trim();
   const root = rootRaw ? parseInt(rootRaw, 10) : 0;
   const pn = parseInt(req.query.pn, 10) || 1;
@@ -2244,12 +2251,16 @@ app.get("/api/reply/replies", async (req, res) => {
       .json({ error: "缺少 oid 或 root 参数(root 为楼层评论的 rpid,可从 /api/reply 返回列表获取)" });
   }
 
+  // 与 /api/reply 同一套类型参数:默认 1 = 视频,动态评论区传 17
+  const typeNum = parseInt(req.query.type, 10);
+  const type = Number.isInteger(typeNum) && typeNum > 0 && typeNum < 1000 ? String(typeNum) : "1";
+
   try {
     const cookie = await getUpstreamCookie(req);
 
     const url = new URL("https://api.bilibili.com/x/v2/reply/reply");
-    url.searchParams.set("type", "1"); // 1 = 视频
-    url.searchParams.set("oid", String(oid));
+    url.searchParams.set("type", type);
+    url.searchParams.set("oid", oid);
     url.searchParams.set("root", String(root));
     url.searchParams.set("pn", String(pn));
     url.searchParams.set("ps", String(SUB_REPLY_PAGE_SIZE));
@@ -2329,12 +2340,20 @@ app.post("/api/reply/add", async (req, res) => {
   const session = requireLogin(req, res);
   if (!session) return;
 
-  const oid = parseInt((req.body && req.body.oid) || "", 10);
+  // oid 当字符串传: 视频的 avid / 动态的 19 位雪花 id 都走这里,parseInt 会把雪花 id 抹平。
+  // 评论区类型默认 1(视频稿件),动态页传 17、相簿 11、专栏 12……
+  const oidRaw = ((req.body && req.body.oid) || "").toString().trim();
+  const oid = /^\d{1,20}$/.test(oidRaw) ? oidRaw : "";
+  const typeNum = parseInt((req.body && req.body.type) || "", 10);
+  const type = Number.isInteger(typeNum) && typeNum > 0 && typeNum < 1000 ? String(typeNum) : "1";
   const message = ((req.body && req.body.message) || "").toString().trim();
   const root = ((req.body && req.body.root) || "").toString().trim();
   const parent = ((req.body && req.body.parent) || "").toString().trim() || root;
   const pictures = buildReplyPictures(req.body && req.body.pictures);
   const atMap = buildReplyAtMap(req.body && req.body.atMentions);
+  // 写操作的 Referer 得是"评论发生在哪个页面":视频评论区在稿件页,动态评论区在动态页
+  const referer = String((req.body && req.body.referer) || "").trim();
+  const pageUrl = /^https:\/\/t\.bilibili\.com\//.test(referer) ? referer : videoPageUrl(oid);
 
   if (!oid) return res.status(400).json({ code: 1, message: "缺少 oid 参数" });
   // 只发图不写字是允许的,所以有图时不要求正文非空
@@ -2346,8 +2365,8 @@ app.post("/api/reply/add", async (req, res) => {
   try {
     const cookie = await getUpstreamCookie(req);
     const body = new URLSearchParams({
-      oid: String(oid),
-      type: "1",
+      oid,
+      type,
       message,
       plat: "1", // 和网页端一样标一下来源平台
       csrf: session.biliJct || "",
@@ -2363,7 +2382,7 @@ app.post("/api/reply/add", async (req, res) => {
 
     const biliRes = await fetchWithTimeout("https://api.bilibili.com/x/v2/reply/add", {
       method: "POST",
-      headers: writeHeaders(cookie, videoPageUrl(oid)),
+      headers: writeHeaders(cookie, pageUrl),
       body: body.toString(),
     });
     const data = await biliRes.json();
@@ -2564,9 +2583,15 @@ app.post("/api/reply/del", async (req, res) => {
   const session = requireLogin(req, res);
   if (!session) return;
 
-  const oid = parseInt((req.body && req.body.oid) || "", 10);
+  // 同 /api/reply/add: oid 当字符串(动态是 19 位雪花 id),类型由调用方给,Referer 跟着走
+  const oidRaw = ((req.body && req.body.oid) || "").toString().trim();
+  const oid = /^\d{1,20}$/.test(oidRaw) ? oidRaw : "";
+  const typeNum = parseInt((req.body && req.body.type) || "", 10);
+  const type = Number.isInteger(typeNum) && typeNum > 0 && typeNum < 1000 ? String(typeNum) : "1";
   const rpid = ((req.body && req.body.rpid) || "").toString().trim();
   const root = ((req.body && req.body.root) || "").toString().trim();
+  const referer = String((req.body && req.body.referer) || "").trim();
+  const pageUrl = /^https:\/\/t\.bilibili\.com\//.test(referer) ? referer : videoPageUrl(oid);
 
   if (!oid) return res.status(400).json({ code: 1, message: "缺少 oid 参数" });
   if (!rpid) return res.status(400).json({ code: 1, message: "缺少 rpid 参数" });
@@ -2574,8 +2599,8 @@ app.post("/api/reply/del", async (req, res) => {
   try {
     const cookie = await getUpstreamCookie(req);
     const body = new URLSearchParams({
-      oid: String(oid),
-      type: "1",
+      oid,
+      type,
       rpid,
       csrf: session.biliJct || "",
     });
@@ -2584,7 +2609,7 @@ app.post("/api/reply/del", async (req, res) => {
 
     const biliRes = await fetchWithTimeout("https://api.bilibili.com/x/v2/reply/del", {
       method: "POST",
-      headers: writeHeaders(cookie, videoPageUrl(oid)),
+      headers: writeHeaders(cookie, pageUrl),
       body: body.toString(),
     });
     const data = await biliRes.json();
@@ -3483,7 +3508,9 @@ app.post("/api/action/favorite", async (req, res) => {
   try {
     // 前端给的是收藏夹 id,这里回查一次"自己创建的收藏夹"做校验,
     // 避免把不属于自己的 id 拼进 deal(收藏是账号级操作,不该由请求体说了算)
-    const own = await assertOwnFavorites(req, res, session, [...addMediaIds.split(","), ...delMediaIds.split(",")]);
+    // 两边都可能为空串: add 为空时 "".split(",") 会给出 [""],这个空 id 谁都不属于,
+    // 会把 every() 判成 false,把一次正常收藏顶成"收藏夹不存在或不属于当前账号"
+    const own = await assertOwnFavorites(req, res, session, [...addMediaIds.split(","), ...delMediaIds.split(",")].filter(Boolean));
     if (own === null) return;
     if (!own) {
       return res.status(400).json({ code: 1, message: "收藏夹不存在或不属于当前账号" });
@@ -3618,6 +3645,367 @@ app.get("/api/action/status", async (req, res) => {
   }
 });
 
+/* ----------------------------- 动态接口 -----------------------------
+ * 新版动态流(web-dynamic/v1/feed/all)一次把所有内容装在一个 item 里,层级很深、
+ * 字段用不上的一大堆,所以在这里就压成前端直接能画的模型,页面不再碰上游结构。
+ * 翻页用上游给的 offset(等于上一页最后一条的 id_str),没有页码概念。
+ * -------------------------------------------------------------------- */
+
+const DYNAMIC_UPSTREAM = "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all";
+const DYNAMIC_MAX_IMAGES = 9; // 和网页端一致: 九宫格,超出只标注张数
+
+// 动态接口的错误码翻译,和 spaceErrorText 同一套口径,只是没有"用户不存在"这类分支
+function dynamicErrorText(code, fallback) {
+  if (code === -101) return LOGIN_EXPIRED_MESSAGE;
+  if (code === -352 || code === -799 || code === 412) return "加载失败,请稍后重试";
+  return fallback || "加载失败,请稍后重试";
+}
+
+// 动态正文里直接拼进 innerHTML 的字符,上游文本不受控,统一转义
+function escapeHtml(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// 富文本节点: 只有这几种节点能给出站内/站外链接或表情图,其余一律当纯文本输出
+const RICH_TEXT_LINK_TYPES = new Set([
+  "RICH_TEXT_NODE_TYPE_AT",
+  "RICH_TEXT_NODE_TYPE_TOPIC",
+  "RICH_TEXT_NODE_TYPE_WEB",
+]);
+
+function richTextNodeText(node) {
+  const raw = node && (node.text != null ? node.text : node.orig_text);
+  return escapeHtml(raw);
+}
+
+// 正文 = 富文本节点拼成的 HTML;没有节点时退回 desc.text 整段转义
+function mapRichTextNodes(desc) {
+  if (!desc) return "";
+  const nodes = Array.isArray(desc.rich_text_nodes) ? desc.rich_text_nodes : [];
+  if (!nodes.length) return escapeHtml(desc.text);
+
+  return nodes
+    .map((node) => {
+      const type = node && node.type;
+      if (type === "RICH_TEXT_NODE_TYPE_EMOJI") {
+        const emoji = node.emoji || {};
+        const src = normalizeImgUrl(emoji.gif_url || emoji.icon_url);
+        if (!src) return richTextNodeText(node);
+        const alt = escapeHtml(emoji.text || node.text || "表情");
+        return `<img class="dy-emote" src="${escapeHtml(src)}" alt="${alt}" loading="lazy" referrerpolicy="no-referrer" />`;
+      }
+      if (RICH_TEXT_LINK_TYPES.has(type)) {
+        const href = safeJumpUrl(node.jump_url);
+        if (href) {
+          const external = !href.startsWith("https://www.bilibili.com") && !href.startsWith("https://t.bilibili.com");
+          const rel = external ? ' rel="noreferrer"' : "";
+          return `<a href="${escapeHtml(href)}"${rel}>${richTextNodeText(node)}</a>`;
+        }
+      }
+      return richTextNodeText(node);
+    })
+    .join("");
+}
+
+// 上游给的是 "//www.bilibili.com/..." 这类协议相对地址,补成 https;非 http(s) 的一律丢掉
+function safeJumpUrl(raw) {
+  const url = normalizeImgUrl(raw);
+  return /^https?:\/\//i.test(url) ? url : "";
+}
+
+// 视频简介只在一行里显示,上游简介里的换行/连续空白先压成单空格
+function singleLineText(raw) {
+  return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+}
+
+function dynamicImage(src, width, height) {
+  const url = normalizeImgUrl(src);
+  if (!url) return null;
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  return { url, width: w > 0 ? w : 0, height: h > 0 ? h : 0 };
+}
+
+// 动态卡片下面那排统计。上游禁止互动时只有 forbidden 标记,count 仍给数值,照常显示。
+// like.status 是"当前账号点没点过赞",有动态 id 的动态才有这一位,拿不到就当没点过
+function mapDynamicStat(stat) {
+  return {
+    like: Number(stat?.like?.count) || 0,
+    liked: !!stat?.like?.status,
+    comment: Number(stat?.comment?.count) || 0,
+    forward: Number(stat?.forward?.count) || 0,
+  };
+}
+
+const DYNAMIC_MAJOR_TYPES = new Set([
+  "MAJOR_TYPE_ARCHIVE",
+  "MAJOR_TYPE_UGC_SEASON",
+  "MAJOR_TYPE_DRAW",
+  "MAJOR_TYPE_ARTICLE",
+  "MAJOR_TYPE_LIVE",
+  "MAJOR_TYPE_LIVE_RCMD",
+  "MAJOR_TYPE_PGC",
+  "MAJOR_TYPE_COURSES",
+  "MAJOR_TYPE_MUSIC",
+  "MAJOR_TYPE_COMMON",
+  "MAJOR_TYPE_NONE",
+]);
+
+// 主体卡片: 视频/图文/专栏/直播等各自挑出要展示的字段,未识别的类型返回 null,
+// 由前端降级成"作者 + 文字 + 原文链接",不让新结构把整条动态变成空白
+function mapDynamicCard(major) {
+  const type = major && major.type;
+  if (!DYNAMIC_MAJOR_TYPES.has(type)) return null;
+
+  if (type === "MAJOR_TYPE_ARCHIVE" || type === "MAJOR_TYPE_UGC_SEASON") {
+    const v = major.archive || major.ugc_season || {};
+    const aid = parseInt(v.aid, 10) || 0;
+    const bvid = v.bvid || "";
+    if (!aid && !bvid) return null;
+    return {
+      kind: "video",
+      aid,
+      bvid,
+      title: escapeHtml(v.title),
+      desc: escapeHtml(singleLineText(v.desc)),
+      cover: normalizeImgUrl(v.cover),
+      duration: v.duration_text || "",
+      play: v.stat?.play || "",
+      danmaku: v.stat?.danmaku || "",
+      badge: escapeHtml(v.badge?.text),
+    };
+  }
+
+  if (type === "MAJOR_TYPE_DRAW") {
+    const images = (major.draw?.items || [])
+      .map((it) => dynamicImage(it.src, it.width, it.height))
+      .filter(Boolean);
+    if (!images.length) return null;
+    return { kind: "draw", images };
+  }
+
+  if (type === "MAJOR_TYPE_ARTICLE") {
+    const a = major.article || {};
+    const url = safeJumpUrl(a.jump_url) || (a.id ? `https://www.bilibili.com/read/cv${a.id}` : "");
+    return {
+      kind: "article",
+      title: escapeHtml(a.title),
+      cover: normalizeImgUrl(a.covers?.[0]),
+      desc: escapeHtml(a.desc),
+      label: escapeHtml(a.label),
+      url,
+    };
+  }
+
+  if (type === "MAJOR_TYPE_LIVE" || type === "MAJOR_TYPE_LIVE_RCMD") {
+    const live = type === "MAJOR_TYPE_LIVE" ? major.live || {} : {};
+    const url = safeJumpUrl(live.jump_url) || (live.id ? `https://live.bilibili.com/${live.id}` : "");
+    return {
+      kind: "live",
+      title: escapeHtml(live.title),
+      cover: normalizeImgUrl(live.cover),
+      desc: [live.desc_first, live.desc_second].filter(Boolean).join(" · "),
+      liveState: live.live_state === 1 ? 1 : 0,
+      url,
+    };
+  }
+
+  if (type === "MAJOR_TYPE_NONE") {
+    return { kind: "none", tips: escapeHtml(major.none?.tips) || "该动态已被删除" };
+  }
+
+  // 剧集/课程/音频/一般类型: 结构相似,只取标题/封面/描述 + 详情页链接
+  const src = (type === "MAJOR_TYPE_PGC" && major.pgc) ||
+    (type === "MAJOR_TYPE_COURSES" && major.courses) ||
+    (type === "MAJOR_TYPE_MUSIC" && major.music) ||
+    major.common ||
+    {};
+  const url = safeJumpUrl(src.jump_url);
+  const title = src.title || "";
+  const cover = src.cover || "";
+  const desc = src.desc || src.sub_title || src.label || "";
+  if (!url && !title && !cover) return null;
+  return {
+    kind: "generic",
+    title: escapeHtml(title),
+    cover: normalizeImgUrl(cover),
+    desc: escapeHtml(desc),
+    badge: escapeHtml(src.badge?.text),
+    url,
+  };
+}
+
+// 通用部分的兜底时长展示: 转发原动态层级里也有模块信息,直接复用同一个映射函数
+function mapDynamicAuthor(modules) {
+  const author = (modules && modules.module_author) || {};
+  return {
+    mid: author.mid || 0,
+    name: escapeHtml(author.name),
+    face: normalizeImgUrl(author.face),
+    time: author.pub_time || "",
+    ts: Number(author.pub_ts) || 0,
+    pubAction: escapeHtml(author.pub_action),
+  };
+}
+
+// 动态评论区的参数:上游在 basic 里给出评论区类型(comment_type: 17=动态、11=相簿、1=视频……)
+// 与目标 id(comment_id_str)。两者按"这个类型的 oid 长什么样"校验后再用:上游偶尔给的类型
+// 与 id 对不上,错着传只会拿到一堆不相干的评论或直接报错
+const DYNAMIC_COMMENT_OID_RE = {
+  1: /^\d{1,15}$/,   // 稿件 avid
+  11: /^\d{1,15}$/,  // 相簿
+  12: /^\d{1,15}$/,  // 专栏 cvid
+  14: /^\d{1,15}$/,  // 音频
+  17: /^\d{15,20}$/, // 动态 id
+};
+
+function dynamicCommentTarget(item) {
+  const basic = (item && item.basic) || {};
+  const type = Number(basic.comment_type) || 0;
+  const oid = String(basic.comment_id_str || "");
+  const re = DYNAMIC_COMMENT_OID_RE[type];
+  if (re && re.test(oid)) return { commentType: type, commentOid: oid };
+  // 校验不过的视频动态退回稿件 av 号(type=1)
+  if (item && item.type === "DYNAMIC_TYPE_AV") {
+    const aid = String(item.modules?.module_dynamic?.major?.archive?.aid || "");
+    if (/^\d{1,15}$/.test(aid)) return { commentType: 1, commentOid: aid };
+  }
+  return { commentType: 0, commentOid: "" };
+}
+
+// 一条动态 → 前端模型;拿不出任何可展示内容时返回 null,调用处过滤掉
+function mapDynamic(item) {
+  if (!item || !item.id_str) return null;
+  const modules = item.modules || {};
+  const dynamic = modules.module_dynamic || {};
+  const major = dynamic.major || null;
+  // 图文动态的另一种形态把正文放在 module_content.paragraphs 里,这里解析不了,
+  // 有 major 就照样给卡片,只有纯文字没有 major 时才整条丢掉
+  const card = mapDynamicCard(major);
+  if (!card && !dynamic.desc && !item.orig) return null;
+
+  const author = mapDynamicAuthor(modules);
+  if (!author.mid && !author.name) return null;
+
+  const images = card?.kind === "draw" ? card.images : [];
+  const comment = dynamicCommentTarget(item);
+  const mapped = {
+    id: item.id_str,
+    type: item.type || "",
+    url: `https://t.bilibili.com/${item.id_str}`,
+    visible: item.visible !== false,
+    pinned: !!modules.module_tag,
+    author,
+    text: mapRichTextNodes(dynamic.desc),
+    // 图片动态的图与卡片合并成同一份数据,前端只需要看 images
+    images: images.slice(0, DYNAMIC_MAX_IMAGES),
+    extraImageCount: Math.max(0, images.length - DYNAMIC_MAX_IMAGES),
+    card: card && card.kind !== "draw" ? card : null,
+    stat: mapDynamicStat(modules.module_stat),
+    foldStatement: escapeHtml(modules.module_fold?.statement),
+    dispute: modules.module_dispute?.title ? escapeHtml(modules.module_dispute.title) : "",
+    // 评论区参数(0/"" 表示这条动态没有可访问的评论区)
+    commentType: comment.commentType,
+    commentOid: comment.commentOid,
+  };
+
+  if (item.type === "DYNAMIC_TYPE_FORWARD" && item.orig) {
+    mapped.forward = mapDynamic(item.orig);
+  }
+
+  return mapped;
+}
+
+app.get("/api/dynamics", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  // offset 是上游的不透明游标(动态 id),只做长度与类型防护
+  const offset = String((req.query && req.query.offset) || "").trim().slice(0, 40);
+  // type=video 是上游的"视频投稿"分类(顶栏动态浮层用它),其余一律按全部动态取
+  const type = (req.query && req.query.type) === "video" ? "video" : "all";
+
+  try {
+    const cookie = await sessionCookieHeader(session);
+
+    const url = new URL(DYNAMIC_UPSTREAM);
+    url.searchParams.set("type", type);
+    if (offset) url.searchParams.set("offset", offset);
+
+    const biliRes = await fetchWithTimeout(url.toString(), {
+      headers: { ...COMMON_HEADERS, Cookie: cookie },
+    });
+    const data = await upstreamJson(biliRes, "动态");
+
+    if (data.code === -101) {
+      dropSession(req.sessionId, session, "上游判定未登录(UPSTREAM_NOT_LOGIN)");
+      return sendLoginExpired(res);
+    }
+    if (data.code !== 0) {
+      return res.status(400).json({ code: 1, message: dynamicErrorText(data.code, "加载动态失败,请稍后重试") });
+    }
+
+    const list = (data.data?.items || []).map(mapDynamic).filter(Boolean);
+    const nextOffset = data.data?.offset || "";
+    return res.json({
+      code: 0,
+      list,
+      hasMore: !!data.data?.has_more && !!nextOffset && nextOffset !== offset,
+      offset: nextOffset,
+    });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
+/* ----------------------------- 动态点赞 -----------------------------
+ * 数据源: x/dynamic/feed/dyn/thumb,参数走 json 正文(不是表单),csrf 在 URL 上。
+ * up = 1 点赞 / 2 取消点赞,没有"切换"这种含糊状态。
+ * 动态的写操作发生在动态页(t.bilibili.com),Referer 固定用它。
+ * -------------------------------------------------------------------- */
+
+app.post("/api/action/dynamic-like", async (req, res) => {
+  const session = requireLogin(req, res);
+  if (!session) return;
+
+  const dynId = String((req.body && req.body.dynId) || "").trim();
+  const like = !!(req.body && req.body.like);
+  // 动态 id 是 19 位雪花 id,当字符串传,数字会把末几位抹平
+  if (!/^\d{15,20}$/.test(dynId)) {
+    return res.status(400).json({ code: 1, message: "缺少动态 id" });
+  }
+
+  try {
+    const cookie = await getUpstreamCookie(req);
+    const url = new URL("https://api.bilibili.com/x/dynamic/feed/dyn/thumb");
+    url.searchParams.set("csrf", session.biliJct || "");
+
+    const biliRes = await fetchWithTimeout(url.toString(), {
+      method: "POST",
+      headers: { ...writeHeaders(cookie, "https://t.bilibili.com/"), "Content-Type": "application/json" },
+      body: JSON.stringify({ dyn_id_str: dynId, up: like ? 1 : 2 }),
+    });
+    const data = await biliRes.json();
+
+    if (replyIfUnauthorized(req, res, data)) return;
+
+    if (data.code !== 0) {
+      return res.json({ code: data.code, message: data.message || (like ? "点赞失败" : "取消点赞失败") });
+    }
+    res.json({ code: 0, liked: like });
+  } catch (err) {
+    console.error(err);
+    const { status, message } = buildErrorResponse(err, "点赞失败,请稍后重试", 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
 /* ----------------------------- 静态页面路由 ----------------------------- */
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -3637,6 +4025,10 @@ app.get("/account", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "account.html"));
 });
 
+app.get("/dynamic", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "dynamic.html"));
+});
+
 app.get("/settings", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "settings.html"));
 });
@@ -3646,6 +4038,7 @@ app.listen(PORT, () => {
   console.log(`  首页: http://localhost:${PORT}/`);
   console.log(`  搜索结果页: http://localhost:${PORT}/search`);
   console.log(`  播放页: http://localhost:${PORT}/player`);
+  console.log(`  动态页: http://localhost:${PORT}/dynamic`);
   console.log(`  个人主页: http://localhost:${PORT}/account`);
   console.log(`  设置页: http://localhost:${PORT}/settings`);
 });

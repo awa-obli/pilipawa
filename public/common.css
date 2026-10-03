@@ -135,7 +135,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   width: calc(100% - 48px);
-  max-width: 480px;
+  max-width: 450px;
 }
 .search-box {
   width: 100%;
@@ -546,126 +546,6 @@ body {
   transition: background .15s ease;
 }
 .nav-panel-login:hover { background: var(--pink-dark); }
-
-/* --------------------------- 收藏夹选择弹窗 --------------------------- */
-/* 播放页"选择收藏夹"与个人主页"复制/移动到收藏夹"共用:居中弹窗,夹子多时只有列表
-   内部滚动,弹窗高度不变;底部按钮由页面决定(播放页的取消+确定,个人主页只剩取消) */
-.fav-folder-mask {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay);
-  z-index: 200;
-  align-items: center;
-  justify-content: center;
-  display: none;
-}
-.fav-folder-mask.show { display: flex; }
-.fav-folder-modal {
-  width: 320px;
-  background: var(--card);
-  border-radius: 14px;
-  padding: 20px 0 0;
-  text-align: center;
-}
-.fav-folder-title {
-  margin: 0 0 14px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-}
-/* 列表:夹子名在左(count 列会把名字列挤窄),名字过长省略,不影响数字列 */
-.fav-folder-list {
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 0 12px;
-  text-align: left;
-}
-.fav-folder-item {
-  display: flex;
-  align-items: center;
-  padding: 9px 8px;
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--text-2);
-  cursor: pointer;
-}
-.fav-folder-item:hover { background: var(--hover); }
-.fav-folder-name {
-  flex: 1;
-  min-width: 0;
-  margin-right: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.fav-folder-count {
-  flex-shrink: 0;
-  color: var(--text-3);
-  font-size: 12px;
-}
-/* 勾选标记:未勾选时只留一个淡色对勾占位,选中后整行变主色 */
-.fav-folder-check {
-  flex-shrink: 0;
-  display: flex;
-  margin-right: 10px;
-  color: var(--border);
-}
-.fav-folder-item.checked { color: var(--pink); }
-.fav-folder-item.checked .fav-folder-check { color: var(--pink); }
-.fav-folder-placeholder {
-  padding: 12px 10px 16px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-3);
-}
-.fav-folder-error {
-  padding: 12px 10px 16px;
-  font-size: 13px;
-  color: var(--text-2);
-}
-.fav-folder-retry {
-  margin-top: 10px;
-  padding: 5px 14px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--card);
-  color: var(--text-2);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-}
-.fav-folder-retry:hover { color: var(--text); border-color: var(--text-3); }
-/* 底部操作行:按钮等宽排在中间,数量由各页决定(两处都是"取消 + 确定") */
-.fav-folder-foot {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 10px;
-  width: 260px;
-  margin: 16px auto 20px;
-}
-.fav-folder-btn {
-  padding: 7px 0;
-  border: none;
-  border-radius: 16px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-.fav-folder-btn.cancel {
-  background: var(--fill);
-  color: var(--text-2);
-}
-.fav-folder-btn.cancel:hover { background: var(--hover-strong); color: var(--text); }
-.fav-folder-btn.confirm {
-  background: var(--pink);
-  color: var(--on-brand);
-}
-.fav-folder-btn.confirm:hover { background: var(--pink-dark); }
-.fav-folder-btn:disabled {
-  cursor: default;
-  opacity: .55;
-}
 
 /* --------------------------- 窄屏:导航收窄 --------------------------- */
 /* 用户名占位较大,960px 起只留头像 */
