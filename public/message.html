@@ -1108,7 +1108,8 @@ async function refreshChatTail(seq) {
     if (again) box.scrollTop += again.getBoundingClientRect().top - anchorTop;
   }
 
-  const fresh = list.filter((msg) => Number(msg.seqno) > watermark).length;
+  // 自己发的消息也在上游列表里,不能算"新消息"
+  const fresh = list.filter((msg) => Number(msg.seqno) > watermark && !msg.isMine).length;
   if (fresh && !atBottom) showNewMsgPill(fresh);
 }
 

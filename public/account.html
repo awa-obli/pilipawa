@@ -485,7 +485,7 @@
     font-size: 12px;
     color: var(--text-3);
   }
-/* 收藏夹卡片上跟在 UP 名后面的"收藏于 xxx": 与 UP 名同行,过长时随 UP 名一起省略 */
+/* 收藏夹卡片上跟在 UP 名后面的"收藏于 xxx": 在 UP 链接之外,本身不可点也不参与悬停 */
   .author-fav {
     margin-left: 6px;
     color: var(--text-3);
@@ -499,8 +499,8 @@
        否则只有 <a> 和角标在渐变、文字是硬跳色 */
     transition: color .12s ease;
   }
-/* UP 这一行(角标 + 用户名 + 日期)整体是一个链接,指向 TA 的个人主页,
-   角标和文字都在 <a> 里,悬停任意一处三者一起变粉、点击行为一致 */
+/* UP 角标 + 用户名整体是一个链接,指向 TA 的个人主页,
+   悬停角标或昵称时一起变粉,点击行为一致 */
   .author-link {
     display: flex;
     align-items: center;
@@ -661,6 +661,14 @@
     opacity: 1;
     visibility: visible;
     transform: translateY(-50%) translateX(0);
+  }
+  /* 触屏没有悬停:当前打开的夹子常驻 "..." 按钮(数字让位),点按展开菜单 */
+  @media (hover: none) {
+    .folder-item.active .folder-more {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .folder-item.active .folder-count { opacity: 0; }
   }
   .folder-menu-item {
     display: flex;
@@ -825,9 +833,10 @@
     outline-offset: 1px;
   }
 
-  /* 右侧内容区顶部只留夹子名(切换靠左侧边栏,不再有返回按钮) */
+  /* 右侧内容区顶部只留夹子名与内容数(切换靠左侧边栏,不再有返回按钮) */
   .fav-detail-header { margin-bottom: 16px; }
   .fav-detail-title { font-size: 15px; font-weight: 600; color: var(--text); }
+  .fav-detail-count { font-size: 13px; color: var(--text-3); }
 
 /* 空状态 / 加载 / 错误 */
   .placeholder, .error-box {
@@ -1027,6 +1036,8 @@
     .fav-side { flex: none; width: 100%; }
     /* 窄屏上左右并排会让两边都太窄,改成上下堆叠,夹子列表限高内部滚动 */
     .folder-list { max-height: 168px; overflow-y: auto; }
+    /* 夹子行贴到视口右边缘,菜单改为向左展开,免得滑出屏幕 */
+    .folder-menu { left: auto; right: 0; margin-left: 0; }
   }
 </style>
 </head>
@@ -1192,7 +1203,7 @@
         </aside>
         <div class="fav-main" id="favDetailView">
           <div class="fav-detail-header">
-            <span class="fav-detail-title" id="favDetailTitle"></span>
+            <span class="fav-detail-title" id="favDetailTitle"></span><span class="fav-detail-count" id="favDetailCount"></span>
           </div>
           <div id="favDetailList"></div>
           <div class="load-more-row" id="favLoadMoreRow" style="display:none;"></div>
@@ -1995,7 +2006,8 @@ function switchTab(tab) {
 // 底部信息行二选一:
 //   author + authorMid -> "UP 角标 + 昵称"链接(历史记录/收藏夹用,点昵称进 TA 的空间)
 //   meta               -> 纯文本一行(投稿列表用,只显示日期,不链任何人)
-// favTime 跟在 UP 名后面,收藏夹用来显示"收藏于 xxx"(上游对番剧/课程等不给收藏时间,给了才画)
+// favTime 跟在 UP 名后面,收藏夹用来显示"收藏于 xxx"(上游对番剧/课程等不给收藏时间,给了才画;
+// 在 UP 链接外,本身不可点)
 // rightMeta 贴在该行最右边(历史记录用来显示观看时间,左边 UP、右边时间)。
 // actionHTML 是标题右侧的操作按钮(删历史/取消收藏/移动复制),与标题同一行,由卡片点击委托优先拦截。
 // 卡片本身是 div: 封面、标题、UP 名各自是真 <a href>(右键、中键、键盘都能用),
@@ -2012,8 +2024,8 @@ function videoCardHTML({ href, pic, title, author, duration, authorMid, favTime,
               <rect x="0.5" y="0.5" width="23" height="19" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
               <text x="12" y="14" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', Roboto, sans-serif">UP</text>
             </svg>
-            <span class="author-name">${escapeHtml(author)}</span>${favTag}
-          </a>
+            <span class="author-name">${escapeHtml(author)}</span>
+          </a>${favTag}
         </div>`
     : (meta ? `<div class="author"><span>${meta}</span></div>` : '');
   const infoHTML = (authorHTML || rightMeta)
@@ -2097,11 +2109,11 @@ function handleCardAreaClick(e) {
  * 收藏夹卡片的操作(取消收藏 / 复制到 / 移动到)收在一个 "..." 菜单里,
  * 菜单挂在卡片上(绝对定位),不参与网格布局,展开时不会把卡片撑高。
  * 卡片和侧栏那两套菜单的逻辑完全一样,只差按钮上的 aria-expanded,
- * 所以共用这个控制器:悬停 "..." 按钮展开,离开按钮或菜单收起,同时只开一个。
- * close() 是幂等的,点菜单项时也调它。
+ * 所以共用这个控制器:悬停 "..." 按钮展开,离开按钮或菜单收起,同时只开一个;
+ * 触屏(没有悬停)下改为点按开合。close() 是幂等的,点菜单项时也调它。
  * -------------------------------------------------------------------- */
 
-function createMenuController(triggerSelector, menuSelector, syncAria) {
+function createMenuController(triggerSelector, menuSelector, syncAria, tap = false) {
   let open = null; // 当前展开的那一个: { button, menu }
 
   function close() {
@@ -2139,8 +2151,26 @@ function createMenuController(triggerSelector, menuSelector, syncAria) {
     close();
   }
 
+  // 触屏:点按钮开合,点到别处收起
+  function handleTap(e) {
+    const button = e.target.closest(triggerSelector);
+    if (!button) return;
+    if (open && open.button === button) close();
+    else show(button, button.parentElement.querySelector(menuSelector));
+  }
+
+  function handleTapOutside(e) {
+    if (e.target.closest(triggerSelector) || e.target.closest(menuSelector)) return;
+    close();
+  }
+
   // 列表会整块重绘,逐个元素挂监听会被重绘丢掉,所以委托在容器上
   function bind(container) {
+    if (tap) {
+      container.addEventListener('click', handleTap);
+      document.addEventListener('click', handleTapOutside);
+      return;
+    }
     container.addEventListener('mouseover', handleOver);
     container.addEventListener('mouseout', handleOut);
   }
@@ -2148,7 +2178,10 @@ function createMenuController(triggerSelector, menuSelector, syncAria) {
   return { close, bind };
 }
 
-const cardMenu = createMenuController('.card-more', '.card-menu', false);
+// 触屏没有悬停:卡片与夹子行的 "..." 菜单都改为点按开合
+const tapMenus = window.matchMedia('(hover: none)').matches;
+
+const cardMenu = createMenuController('.card-more', '.card-menu', false, tapMenus);
 cardMenu.bind(document.getElementById('favDetailList'));
 
 // 卡片菜单三项的图标(尺寸由 CSS 统一钉成 16px,见 .card-menu-item svg)
@@ -2278,6 +2311,7 @@ async function handleCardAction(btn, favCard) {
       if (folder && folder.mediaCount > 0) {
         folder.mediaCount -= 1;
         renderFavFolders();
+        renderFavDetailHeader();
       }
       showToast('已取消收藏');
     }
@@ -2490,6 +2524,13 @@ function renderFavFolders() {
   `).join('');
 }
 
+// 右侧内容区顶部:夹子名 + 内容总数(数量取夹子列表,增删内容后本地同步)
+function renderFavDetailHeader() {
+  const folder = favFolders.find((f) => String(f.id) === String(favDetailMediaId));
+  document.getElementById('favDetailTitle').textContent = favDetailTitle;
+  document.getElementById('favDetailCount').textContent = folder ? `（${folder.mediaCount}）` : '';
+}
+
 /* ----------------------------- 收藏夹信息弹窗(新建 / 编辑) -----------------------------
  * 新建走 x/v3/fav/folder/add,编辑走 x/v3/fav/folder/edit,对应
  * /api/account/favorites/create | edit。两个表单字段完全一样(名称 + 可见性),
@@ -2587,7 +2628,7 @@ async function submitFolderForm() {
     folder.attr = privacy ? (folder.attr | 1) : (folder.attr & ~1);
     if (String(favDetailMediaId) === String(folder.id)) {
       favDetailTitle = title;
-      document.getElementById('favDetailTitle').textContent = title;
+      renderFavDetailHeader();
     }
     renderFavFolders();
     closeFolderForm();
@@ -2643,15 +2684,16 @@ document.getElementById('favFoldersGrid').addEventListener('click', (e) => {
     runFolderMenuAction(menuItem.closest('.folder-item'), menuItem.dataset.folderAction);
     return;
   }
-  // "..." 按钮由悬停开关,点击只当没点
-  if (e.target.closest('.folder-more')) return;
+  // "..." 按钮与它展开的菜单(含菜单内的空白)都不触发进夹子
+  if (e.target.closest('.folder-more, .folder-menu')) return;
   const item = e.target.closest('.folder-item');
   if (item) openFavFolder(item.dataset.id, item.dataset.title);
 });
 
-// 夹子行是可聚焦的(role=button),回车/空格等同点击
+// 夹子行是可聚焦的(role=button),回车/空格等同点击;"..." 按钮与菜单里的按键交给它们自己
 document.getElementById('favFoldersGrid').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (e.target.closest('.folder-more, .folder-menu')) return;
   const item = e.target.closest('.folder-item');
   if (!item) return;
   e.preventDefault();
@@ -2660,9 +2702,10 @@ document.getElementById('favFoldersGrid').addEventListener('keydown', (e) => {
 
 /* ----------------------------- 夹子行的 "..." 菜单 -----------------------------
  * 每一行右侧都有 "..." 按钮,菜单里是"编辑信息 / 删除"(默认收藏夹没有"删除")。
- * 开关逻辑与卡片上那个菜单共用 createMenuController,这里只补上带 aria 的那份配置。
+ * 开关逻辑与卡片上那个菜单共用 createMenuController,这里只补上带 aria 的那份配置;
+ * 触屏没有悬停,改成点按开合(按钮常驻见 CSS 的 hover: none 那条)。
  * -------------------------------------------------------------------- */
-const folderMenu = createMenuController('.folder-more', '.folder-menu', true);
+const folderMenu = createMenuController('.folder-more', '.folder-menu', true, tapMenus);
 folderMenu.bind(document.getElementById('favFoldersGrid'));
 
 // 菜单项的动作都作用在"这一行对应的夹子"上,所以从夹子行上取 id 与标题
@@ -2684,8 +2727,8 @@ function openFavFolder(mediaId, title) {
   favDetailPage = 1;
   favDetailHasMore = true;
 
-  document.getElementById('favDetailTitle').textContent = title;
   renderFavFolders();
+  renderFavDetailHeader();
   loadFavDetail(true);
 }
 
@@ -2888,6 +2931,7 @@ async function submitFavPick(action) {
     }
     // 夹子数量变了,列表页的计数也跟着更新
     renderFavFolders();
+    if (action === 'move') renderFavDetailHeader();
     const title = target ? `「${target.title}」` : '目标收藏夹';
     closeFavPick();
     showToast(action === 'move' ? `已移动到${title}` : `已复制到${title}`);

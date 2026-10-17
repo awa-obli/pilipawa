@@ -136,6 +136,15 @@
         body.is-fullscreen-web .related-expand-btn {
             display: none;
         }
+        /* 小窗(ArtPlayer .art-mini-popup,z-index 9999)在右下角:同角的调试入口要压在它上面;
+           评论附图预览是全屏浮层,也必须在它之上 */
+        body.is-mini .debug-toggle-btn,
+        body.is-mini .debug-panel {
+            z-index: 10000;
+        }
+        body.is-mini .comment-img-mask {
+            z-index: 10001;
+        }
         /* 清晰度入口在 Artplayer "设置"子菜单里:档位高亮用站点主色,当前档位那行右侧的
            文字加重一点,不展开子菜单也能看清。
            子菜单项由 Artplayer 渲染,它只按 default 标一次初始态,后续高亮由 syncQualitySettingUi() 维护 */
@@ -1908,8 +1917,8 @@
             <button class="debug-panel-close" type="button" onclick="toggleDebugPanel(false)">&times;</button>
         </div>
         <div class="json-tabs" id="jsonTabs">
-            <button class="json-tab active" data-type="play">/api/play</button>
-            <button class="json-tab" data-type="info">/api/info</button>
+            <button class="json-tab active" data-type="info">/api/info</button>
+            <button class="json-tab" data-type="play">/api/play</button>
             <button class="json-tab" data-type="danmaku">/api/danmaku</button>
             <button class="json-tab" data-type="related">/api/related</button>
             <button class="json-tab" data-type="reply">/api/reply</button>
@@ -2082,7 +2091,7 @@
         /* ----------------------------- JSON RESPONSE 面板(可切换查看各接口返回) ----------------------------- */
 
         const jsonResults = { play: null, info: null, danmaku: null, related: null, reply: null };
-        let currentJsonTab = 'play';
+        let currentJsonTab = 'info';
 
         function renderJsonOutput() {
             const data = jsonResults[currentJsonTab];
@@ -4657,9 +4666,14 @@
         function initPlayer(playData, danmakuList) {
             // 每次解析新视频前,先销毁上一个实例,避免容器里残留多个播放器
             if (art) {
+                // 小窗是挂在 body 上的独立节点:先退出小窗把视频移回容器,再摘掉它,
+                // 否则切P/换视频会留下一个装着旧 video 的浮窗
+                if (art.mini) art.mini = false;
+                if (art.template.$mini) art.template.$mini.remove();
                 art.destroy(false); // false = 不移除容器本身,方便重新挂载
                 art = null;
             }
+            document.body.classList.remove('is-mini');
             destroyDashAudio();
 
             // 记住本次播放信息/弹幕,fallbackToDurl 降级、切换清晰度都要用
@@ -4680,7 +4694,7 @@
                 url: videoUrl,
                 autoplay: true,
                 autoSize: false,
-                autoMini: false,
+                autoMini: true,
                 setting: true,
                 playbackRate: true,
                 fullscreen: true,
@@ -4743,6 +4757,12 @@
             art.on('fullscreenWeb', (state) => {
                 document.getElementById('videoPlayer').classList.toggle('art-fullscreen-web', state);
                 document.body.classList.toggle('is-fullscreen-web', state);
+            });
+
+            // 滚出播放器区域时 autoMini 会进入右下角小窗,给 body 挂个标记,
+            // 让调试入口与评论附图预览都压在小窗之上(见上面 CSS)
+            art.on('mini', (state) => {
+                document.body.classList.toggle('is-mini', state);
             });
 
             // 继续观看: 等 video 元数据加载完(此时 seek 才是准的)再跳到指定秒数,
