@@ -47,6 +47,7 @@ public/
   common.css           公共样式与主题变量
   common.js            公共脚本：共享转义工具、顶栏交互与登录
   theme.js             主题读取与应用
+  vendor/              自托管的 ArtPlayer / 弹幕插件
 data/sessions.json     登录会话持久化（自动创建，明文，见下）
 ```
 
