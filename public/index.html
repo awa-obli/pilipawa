@@ -247,6 +247,79 @@
   #recommendSection {
     margin-bottom: 24px;
   }
+
+  /* 右下角悬浮操作:滚动离开推荐标题后出现 */
+  .home-fab {
+    position: fixed;
+    right: 22px;
+    bottom: 24px;
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(8px);
+    transition: opacity .18s ease, transform .18s ease, visibility .18s;
+  }
+  .home-fab.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+  .home-fab-btn {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--card);
+    color: var(--text-2);
+    box-shadow: 0 4px 16px var(--shadow);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+  }
+  .home-fab-btn:hover {
+    color: var(--pink);
+    border-color: var(--pink);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px var(--shadow);
+  }
+  .home-fab-btn:active { transform: translateY(0); }
+  .home-fab-btn:disabled {
+    opacity: .6;
+    cursor: default;
+    transform: none;
+  }
+  .home-fab-btn:disabled:hover {
+    color: var(--text-2);
+    border-color: var(--border);
+    box-shadow: 0 4px 16px var(--shadow);
+  }
+  .home-fab-btn:focus-visible {
+    outline: 2px solid var(--pink);
+    outline-offset: 2px;
+  }
+  .home-fab-btn svg { transition: transform .4s ease; }
+  .home-fab-btn.spinning svg { transform: rotate(360deg); }
+
+  @media (max-width: 600px) {
+    .home-fab {
+      right: 14px;
+      bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+      gap: 8px;
+    }
+    .home-fab-btn { width: 40px; height: 40px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .home-fab,
+    .home-fab-btn,
+    .home-fab-btn svg { transition: none; }
+  }
 </style>
 </head>
 <body>
@@ -341,12 +414,30 @@
 
 <div class="page-toast" id="pageToast"></div>
 
+<div class="home-fab" id="homeFab">
+  <button class="home-fab-btn" id="fabRefresh" type="button" title="换一批推荐" aria-label="换一批推荐">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <path d="M20 4v5h-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <button class="home-fab-btn" id="fabTop" type="button" title="回到顶部" aria-label="回到顶部">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 20V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M5.5 11.5 12 5l6.5 6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+</div>
+
 <script src="/common.js"></script>
 <script>
 const form = document.getElementById('searchForm');
 const input = document.getElementById('keyword');
 const recommendResults = document.getElementById('recommendResults');
 const refreshRecommendBtn = document.getElementById('refreshRecommendBtn');
+const homeFab = document.getElementById('homeFab');
+const fabRefresh = document.getElementById('fabRefresh');
+const fabTop = document.getElementById('fabTop');
 
 function formatCount(n) {
   if (n == null) return '-';
@@ -465,6 +556,8 @@ function skeletonCardsHTML(count) {
 let skeletonReserve = 20;
 
 let recommendLoading = false;
+let nearBottom = false; // 上一次 scroll 时是否已在底部区域
+let refreshSpinTimer = 0;
 const seenBvids = new Set(); // 追加加载时用来过滤和已有卡片重复的 bvid
 let recommendGrid = null;    // 指向 #recommendResults 内的 .grid 容器,追加时直接往里插入
 
@@ -487,16 +580,31 @@ function fillSkeletons(grid) {
   return pending.concat(added);
 }
 
-// append=false: "换一批"/首次加载,整块替换;append=true: 滚动到底部时在末尾追加下一批
+// 两个刷新入口共用同一份旋转状态
+function setRefreshSpinning(spinning) {
+  clearTimeout(refreshSpinTimer);
+  refreshRecommendBtn.classList.toggle('spinning', spinning);
+  fabRefresh.classList.toggle('spinning', spinning);
+}
+
+// 整块换一批会让文档高度骤降,先回顶避免滚动位置被钳到底部后误触发追加
+function refreshRecommend() {
+  if (recommendLoading) return;
+  window.scrollTo({ top: 0, behavior: 'auto' });
+  nearBottom = false;
+  loadRecommend({ append: false });
+}
+
 async function loadRecommend({ append = false } = {}) {
   if (recommendLoading) return;
   recommendLoading = true;
+  fabRefresh.disabled = true;
 
   let skeletons = [];
   if (append) {
     skeletons = fillSkeletons(ensureRecommendGrid());
   } else {
-    refreshRecommendBtn.classList.add('spinning');
+    setRefreshSpinning(true);
     seenBvids.clear();
     recommendResults.innerHTML = `<div class="grid">${skeletonCardsHTML(skeletonReserve)}</div>`;
     recommendGrid = recommendResults.querySelector('.grid');
@@ -540,19 +648,20 @@ async function loadRecommend({ append = false } = {}) {
     // 没顶上的骨架在这里收尾;撤骨架和插卡片在同一个任务里完成,不会先空出一帧
     if (!keptSkeletons) skeletons.forEach((card) => card.remove());
     recommendLoading = false;
-    if (!append) setTimeout(() => refreshRecommendBtn.classList.remove('spinning'), 400);
+    fabRefresh.disabled = false;
+    if (!append) refreshSpinTimer = setTimeout(() => setRefreshSpinning(false), 400);
   }
 }
 
-refreshRecommendBtn.addEventListener('click', () => loadRecommend({ append: false }));
+refreshRecommendBtn.addEventListener('click', refreshRecommend);
+fabRefresh.addEventListener('click', refreshRecommend);
 
 // 封面、标题、UP 名都是真 <a href>:右键/中键/键盘交给浏览器,没有点击委托要做的事
 
 /* ----------------------------- 滚动到底部自动加载下一批 ----------------------------- */
 
 const SCROLL_LOAD_THRESHOLD_PX = 300; // 距离底部小于这个值就算进入底部区域
-
-let nearBottom = false; // 上一次 scroll 时是否已在底部区域
+const FAB_SHOW_SCROLL_PX = 320;       // 滚过这个距离才显示悬浮操作
 
 function maybeLoadMoreOnScroll() {
   const gapToBottom =
@@ -567,7 +676,21 @@ function maybeLoadMoreOnScroll() {
   }
 }
 
-window.addEventListener('scroll', maybeLoadMoreOnScroll, { passive: true });
+function updateHomeFab() {
+  homeFab.classList.toggle('show', window.scrollY > FAB_SHOW_SCROLL_PX);
+}
+
+window.addEventListener('scroll', () => {
+  maybeLoadMoreOnScroll();
+  updateHomeFab();
+}, { passive: true });
+
+updateHomeFab();
+
+fabTop.addEventListener('click', () => {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+});
 
 // 首页本身不展示搜索结果,搜索框提交后统一跳转到独立的搜索结果页
 function goSearch(keyword) {
@@ -597,7 +720,7 @@ function showToast(text, durationMs) {
 
 // 登录后画质/推荐跟着登录态变化,刷新一次首页推荐
 function afterLoginSuccess() {
-  if (typeof loadRecommend === 'function') loadRecommend();
+  refreshRecommend();
 }
 
 

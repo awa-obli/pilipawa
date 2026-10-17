@@ -2780,7 +2780,7 @@ async function fetchPersonalizedRecommend(req) {
 
   const params = await signWbiParams({
     y_num: 4,
-    fresh_type: 3,
+    fresh_type: 4,
     feed_version: "V8",
     fresh_idx_1h: Math.floor(Math.random() * 1000) + 1,
     fetch_row: 1,
