@@ -13,7 +13,7 @@
 - **推荐流**：首页推荐视频 / 热门视频，滚动到底自动加载
 - **搜索**：视频 / UP 主搜索，支持排序与分类筛选、分页
 - **动态**：关注动态流
-- **播放**：画中画、小窗播放、截图、倍速、全屏、多清晰度切换、分 P、弹幕、评论、表情 / @ / 图片评论、点赞 / 投币 / 收藏、播放心跳
+- **播放**：画中画、小窗播放、截图、倍速、全屏、多清晰度切换、分 P、弹幕、评论、表情 / @ / 图片评论、点赞 / 投币 / 收藏、在线观看人数、播放心跳
 - **个人主页**：资料卡、投稿、历史记录、收藏夹管理、关注 / 粉丝列表
 - **消息**：我的消息、回复我的、@我的、收到的赞
 - **设置**：一键切换深色主题
@@ -64,7 +64,7 @@ data/sessions.json     登录会话持久化（自动创建，明文，见下）
 | 搜索与推荐 | `/api/search`<br>`/api/suggest`<br>`/api/recommend` |
 | 动态 | `/api/dynamics`<br>`/api/dynamics/update`<br>`/api/action/dynamic-like` |
 | 消息 | `/api/message/unread`<br>`/api/message/feed`<br>`/api/message/sessions`<br>`/api/message/history`<br>`/api/message/read`<br>`/api/message/send` |
-| 播放 | `/api/info`<br>`/api/play`<br>`/api/related`<br>`/api/up/info`<br>`/api/space/videos` |
+| 播放 | `/api/info`<br>`/api/play`<br>`/api/online`<br>`/api/related`<br>`/api/up/info`<br>`/api/space/videos` |
 | 弹幕与评论 | `/api/danmaku`<br>`/api/danmaku/send`<br>`/api/reply`<br>`/api/reply/replies`<br>`/api/reply/add`<br>`/api/reply/like`<br>`/api/reply/at`<br>`/api/reply/upload`<br>`/api/reply/del`<br>`/api/emote/panel` |
 | 互动 | `/api/action/like`<br>`/api/action/coin`<br>`/api/action/favorite`<br>`/api/action/heartbeat`<br>`/api/action/status`<br>`/api/up/follow` |
 

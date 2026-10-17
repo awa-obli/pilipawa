@@ -64,8 +64,10 @@
         /* 标题下方的播放量/弹幕数/发布时间,图标跟搜索页卡片上的保持一致(同一套 svg) */
         .video-stats {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 16px;
+            row-gap: 4px;
             margin: 6px 0 0;
             font-size: 13px;
             color: var(--text-3);
@@ -74,9 +76,14 @@
             display: flex;
             align-items: center;
             gap: 4px;
+            white-space: nowrap;
         }
         .video-stats .stat-item svg {
             flex-shrink: 0;
+        }
+        /* 在线人数固定在同排最右侧: auto 左外边距吃掉中间空白, 右边缘与播放器对齐 */
+        .video-stats #statOnlineItem {
+            margin-left: auto;
         }
         /* 视频描述区 */
         .desc-box {
@@ -1760,6 +1767,14 @@
                         <span id="statDanmaku"></span>
                     </span>
                     <span id="statPubdate"></span>
+                    <!-- 在线人数: 固定在同排最右侧, 右边缘与播放器对齐; 只取 total, 拿不到或 UP 主关闭展示时整项隐藏 -->
+                    <span class="stat-item" id="statOnlineItem" title="数据来自 B 站，每 30 秒刷新" style="display:none;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                            <circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.6"/>
+                        </svg>
+                        <span id="statOnline"></span>
+                    </span>
                 </div>
             </div>
 
@@ -1922,6 +1937,7 @@
             <button class="json-tab" data-type="danmaku">/api/danmaku</button>
             <button class="json-tab" data-type="related">/api/related</button>
             <button class="json-tab" data-type="reply">/api/reply</button>
+            <button class="json-tab" data-type="online">/api/online</button>
         </div>
         <pre id="jsonOutput">等待解析...</pre>
     </div>
@@ -1960,6 +1976,12 @@
         let currentAid = 0;
         // 播放心跳(历史记录/进度同步)用的当前 cid,取自 /api/info 里当前分P 的 pages 项
         let currentCid = 0;
+        // 在线人数: 每 30 秒轮询一次 /api/online, 只显示 total。
+        // onlineSeq 在每次切视频/分P 时递增, 用来丢弃迟到的旧响应
+        let onlineTimer = null;
+        let onlineSeq = 0;
+        let onlineText = '';
+        const ONLINE_REFRESH_MS = 30000;
         // 当前视频 UP 主的 mid,由 /api/info 的 ownerMid 填入;作者信息卡靠它查 /api/up/info,
         // 关注/取关也要用它作为 fid
         let currentOwnerMid = 0;
@@ -2090,7 +2112,7 @@
 
         /* ----------------------------- JSON RESPONSE 面板(可切换查看各接口返回) ----------------------------- */
 
-        const jsonResults = { play: null, info: null, danmaku: null, related: null, reply: null };
+        const jsonResults = { play: null, info: null, danmaku: null, related: null, reply: null, online: null };
         let currentJsonTab = 'info';
 
         function renderJsonOutput() {
@@ -2188,6 +2210,108 @@
             document.getElementById('statPubdate').textContent = formatFullDateTime(data.pubdate);
             box.style.display = 'flex';
         }
+
+        /* ----------------------------- 视频在线人数 -----------------------------
+         * 只展示 /api/online 的 total(全端合计, 上游已格式化成 "7000+"/"10万+"),
+         * 和 B 站播放页的"X人正在看"口径一致。
+         * 30 秒轮询一次; 页面隐藏时暂停, 恢复可见立即刷新。
+         * 切视频/分P 时递增 onlineSeq, 迟到的旧响应会被丢弃, 不会把上一个视频的人数写回来。
+         * 在线人数不是关键数据: 请求失败时保留上一次的值, 从没成功过或 UP 主关闭展示时整项隐藏。
+         * -------------------------------------------------------------------- */
+        function setOnlineText(value) {
+            onlineText = value || '';
+            const item = document.getElementById('statOnlineItem');
+            const span = document.getElementById('statOnline');
+            if (!onlineText) {
+                span.textContent = '';
+                item.style.display = 'none';
+                return;
+            }
+            span.textContent = `${onlineText}人正在看`;
+            item.style.display = 'flex';
+        }
+
+        function onlineRequestUrl(cid) {
+            const id = currentVideoId;
+            const paramType = id.toLowerCase().startsWith('av') ? 'av' : 'bv';
+            const cleanId = id.replace(/av/i, '');
+            return `/api/online?${paramType}=${encodeURIComponent(cleanId)}&cid=${cid}`;
+        }
+
+        async function fetchOnline(seq, cid) {
+            if (seq !== onlineSeq) return;
+            try {
+                const res = await fetchWithTimeout(onlineRequestUrl(cid), 8000);
+                const data = await res.json();
+                if (seq !== onlineSeq) return;
+                setJsonResult('online', data);
+
+                // 正常返回都带 code: 0; 这里兼容一下没有 code 字段的旧响应, 避免把成功当失败
+                if (!res.ok || (data.code != null && data.code !== 0)) {
+                    // 请求失败: 之前有值就保留, 避免网络抖动导致数字闪没; 从没成功过则保持隐藏
+                    if (!onlineText) setOnlineText('');
+                    return;
+                }
+                if (data.showTotal === false || !data.total) {
+                    // UP 主/视频关闭了展示: 整项隐藏, 按约定不回退 count
+                    setOnlineText('');
+                    return;
+                }
+                setOnlineText(data.total);
+            } catch (err) {
+                if (seq !== onlineSeq) return;
+                setJsonResult('online', { error: err.message });
+                // 同上: 保留上一次的值
+            }
+        }
+
+        function stopOnlinePolling() {
+            if (onlineTimer) {
+                clearTimeout(onlineTimer);
+                onlineTimer = null;
+            }
+        }
+
+        function scheduleOnlineRefresh(seq, cid) {
+            stopOnlinePolling();
+            if (seq !== onlineSeq || document.visibilityState === 'hidden') return;
+            // 递归 setTimeout 而不是 setInterval: 上一次请求结束后才排下一次, 慢请求不会叠加
+            onlineTimer = setTimeout(async () => {
+                onlineTimer = null;
+                if (seq !== onlineSeq) return;
+                await fetchOnline(seq, cid);
+                if (seq === onlineSeq) scheduleOnlineRefresh(seq, cid);
+            }, ONLINE_REFRESH_MS);
+        }
+
+        function startOnlinePolling(cid) {
+            const seq = ++onlineSeq;
+            stopOnlinePolling();
+            setOnlineText(''); // 换视频先清掉上一个视频的数字, 不等新请求回来
+            if (!cid) return;
+            // 后台标签页先不发请求, 等 visibilitychange 恢复可见时再补
+            if (document.visibilityState === 'hidden') return;
+
+            // 先立即拉一次, 完成后再排下一次
+            fetchOnline(seq, cid).then(() => {
+                if (seq === onlineSeq) scheduleOnlineRefresh(seq, cid);
+            });
+        }
+
+        // 页面隐藏时停掉轮询, 回到前台立即刷新一次, 再继续 30 秒节奏
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                stopOnlinePolling();
+                return;
+            }
+            if (!currentCid) return;
+            // 递增序号: 页面隐藏期间可能还有一个请求在飞, 回到前台后以新请求为准
+            const seq = ++onlineSeq;
+            stopOnlinePolling();
+            fetchOnline(seq, currentCid).then(() => {
+                if (seq === onlineSeq) scheduleOnlineRefresh(seq, currentCid);
+            });
+        });
 
         /* 播放器下方的点赞/投币/收藏/转发按钮 */
         function setStatWithRaw(spanId, n) {
@@ -2416,6 +2540,7 @@
             }
         });
         window.addEventListener('beforeunload', () => {
+            stopOnlinePolling();
             if (art && !art.paused) reportHeartbeat(art.currentTime, true);
         });
 
@@ -4833,6 +4958,12 @@
 
             const mySeq = ++playSeq;
 
+            // 新一轮播放开始: currentVideoId 已经是新视频, 但 currentCid 还要等 /api/info 才更新。
+            // 先停掉旧 timer、递增序号并清空 cid, 避免旧的在线人数/心跳在这段空窗期用新 bvid + 旧 cid 发出去
+            stopOnlinePolling();
+            onlineSeq += 1;
+            currentCid = 0;
+
             let paramType = id.toLowerCase().startsWith('av') ? 'av' : 'bv';
             let cleanId = id.replace(/av/i, '');
 
@@ -4876,6 +5007,8 @@
             const targetPage = infoOk ? (infoData.pages || []).find((item) => item.page === p) : null;
             const cid = targetPage ? targetPage.cid : null;
             currentCid = cid || 0;
+            // 拿到当前分P的 cid 后再启动在线人数轮询(拿不到 cid 会直接清空/隐藏)
+            startOnlinePolling(currentCid);
 
             // /api/play 必须带 cid;拿不到 cid 说明 /api/info 失败或分P不存在,直接提示,不发请求
             if (!cid) {

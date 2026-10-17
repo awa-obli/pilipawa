@@ -3083,6 +3083,105 @@ app.get("/api/info", async (req, res) => {
   }
 });
 
+/* ----------------------------- 视频在线人数接口 -----------------------------
+ * 转发 x/player/online/total, 给播放页显示"X人正在看"。
+ * 只取 data.total(所有终端合计, 上游已经格式化成 "7000+"/"10万+" 这种字符串);
+ * show_switch.total 为 false 时前端隐藏整项, 不回退 count。
+ * 该接口匿名可用, 不 requireLogin; 但仍统一带上项目现有的设备 cookie,
+ * 让上游看到的 buvid 稳定一些(实测带真实 buvid 时 count 更接近网页端数值)。
+ *
+ * 在线人数是瞬时值, 网页端本身也是几十秒才变一次: 这里缓存 10 秒并合并并发请求,
+ * 多个标签页/多客户端不会把上游打成 "每 30 秒 N 次"。失败不缓存, 下一次轮询自然重试。
+ * -------------------------------------------------------------------- */
+const ONLINE_CACHE_TTL_MS = 10 * 1000;
+const ONLINE_CACHE_MAX_ENTRIES = 200;
+
+const onlineCache = new Map(); // key -> { expiresAt, payload }
+const onlinePending = new Map(); // key -> Promise<payload>
+let lastOnlineErrorLogAt = 0;
+
+async function fetchOnlineTotal({ aid, bvid, cid, cookie }) {
+  const url = new URL("https://api.bilibili.com/x/player/online/total");
+  if (bvid) url.searchParams.set("bvid", bvid);
+  else url.searchParams.set("aid", String(aid));
+  url.searchParams.set("cid", String(cid));
+
+  // 在线人数不是关键路径, 超时给短一点, 免得慢上游把轮询请求堆起来
+  const r = await fetchWithTimeout(
+    url.toString(),
+    { headers: { ...COMMON_HEADERS, Cookie: cookie } },
+    5000
+  );
+  const json = await upstreamJson(r, "获取在线人数");
+  if (json.code !== 0) {
+    const reason = json.message || `code ${json.code}`;
+    throw Object.assign(new Error(reason), {
+      userMessage: `获取在线人数失败: ${reason}`,
+    });
+  }
+
+  const data = json.data || {};
+  return {
+    // total/count 上游给的是字符串, 原样透传; total 里可能带 "+"/"万+", 前端不要 parseInt
+    total: data.total == null ? "" : String(data.total),
+    count: data.count == null ? "" : String(data.count),
+    // 字段缺失时按"允许展示"处理, 只有明确 false 才隐藏
+    showTotal: data.show_switch ? data.show_switch.total !== false : true,
+    fetchedAt: Date.now(),
+  };
+}
+
+app.get("/api/online", async (req, res) => {
+  const bvid = (req.query.bv || "").toString().trim();
+  const aid = parseInt((req.query.av || "").toString().trim(), 10) || 0;
+  const cid = parseInt((req.query.cid || "").toString().trim(), 10) || 0;
+
+  res.set("Cache-Control", "no-store");
+
+  if (!cid) return res.status(400).json({ code: 1, message: "缺少 cid 参数" });
+  if (!bvid && !aid) return res.status(400).json({ code: 1, message: "缺少 bv 或 av 参数" });
+
+  const key = `${bvid || `av${aid}`}:${cid}`;
+  const cached = onlineCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.json({ code: 0, ...cached.payload, cached: true });
+  }
+
+  // 同一个 (视频, 分P) 的并发请求共用一次上游调用, 避免用户狂点刷新时打出一串重复请求
+  let pending = onlinePending.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const cookie = await getUpstreamCookie(req);
+      return fetchOnlineTotal({ aid, bvid, cid, cookie });
+    })().finally(() => onlinePending.delete(key));
+    onlinePending.set(key, pending);
+  }
+
+  try {
+    const payload = await pending;
+
+    // 简单 TTL 清理: 视频切多了不让 Map 无限增长; 过期项清完仍超上限就直接清空
+    if (onlineCache.size >= ONLINE_CACHE_MAX_ENTRIES) {
+      const now = Date.now();
+      onlineCache.forEach((entry, entryKey) => {
+        if (entry.expiresAt <= now) onlineCache.delete(entryKey);
+      });
+      if (onlineCache.size >= ONLINE_CACHE_MAX_ENTRIES) onlineCache.clear();
+    }
+    onlineCache.set(key, { expiresAt: Date.now() + ONLINE_CACHE_TTL_MS, payload });
+
+    res.json({ code: 0, ...payload, cached: false });
+  } catch (err) {
+    // 非关键接口: 失败日志按分钟去重, 避免上游故障时每 30 秒刷一屏
+    if (Date.now() - lastOnlineErrorLogAt > 60 * 1000) {
+      lastOnlineErrorLogAt = Date.now();
+      console.warn("获取在线人数失败:", err.message);
+    }
+    const { status, message } = buildErrorResponse(err, safeUpstreamMessage(err), 502);
+    res.status(status).json({ code: 1, message });
+  }
+});
+
 /* ----------------------------- 播放页作者信息卡:UP 主信息 + 关注/取关 -----------------------------
  * 头像/昵称/签名走 x/space/wbi/acc/info,需要 WBI 签名,同时补 dm_img_* 设备指纹
  * (只带 mid 会被上游判 -352)。真被风控拦死时退一步用 web-interface/card,
