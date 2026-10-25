@@ -1033,6 +1033,7 @@ async function loadChatMessages(session, seq) {
       loadEmotes(),
     ]);
     if (seq !== state.chatSeq) return;
+    rememberEmotes(data.emotes);
     box.innerHTML = renderMessageHistory(data.list || [], data.hasMore);
     const more = document.getElementById('imLoadEarlier');
     if (more) {
@@ -1068,16 +1069,19 @@ async function refreshChatTail(seq) {
   const watermark = chatWatermark(box);
 
   let list;
+  let emotes;
   try {
     const [data] = await Promise.all([
       getJson(`/api/message/history?talker_id=${encodeURIComponent(session.talkerId)}`),
       loadEmotes(),
     ]);
     list = data.list || [];
+    emotes = data.emotes;
   } catch (err) {
     return; // 拉不到就留着现状,下一轮轮询再来
   }
   if (seq !== state.chatSeq) return;
+  rememberEmotes(emotes);
 
   const seqnos = list.map((msg) => Number(msg.seqno)).filter((n) => n > 0);
   if (!seqnos.length) return;
@@ -1154,6 +1158,7 @@ async function loadEarlier(session, seq, wrap) {
         `&begin_seqno=${encodeURIComponent(firstSeq)}`
     );
     if (seq !== state.chatSeq) return;
+    rememberEmotes(data.emotes);
     const list = data.list || [];
     const inserted = list.filter((msg) => msg.seqno !== firstSeq);
     if (inserted.length) wrap.insertAdjacentHTML('afterend', inserted.map((msg) => messageRowHTML(msg)).join(''));
@@ -1274,6 +1279,13 @@ async function loadEmotes() {
     return null;
   }
   return state.emotes;
+}
+
+// 消息记录里的表情(e_infos)只覆盖这一页,并进映射再画正文
+function rememberEmotes(emotes) {
+  (emotes || []).forEach((emote) => {
+    if (emote && emote.text && emote.url) state.emoteMap[emote.text] = { url: emote.url, size: emote.size };
+  });
 }
 
 // 多表情包时上面一排包图标当页签(只有一个包就不显示),下面是对应表情的网格

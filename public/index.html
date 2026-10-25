@@ -556,6 +556,10 @@ function skeletonCardsHTML(count) {
 let skeletonReserve = 20;
 
 let recommendLoading = false;
+let recommendFreshIdx = 1; // 下一次请求的翻页号,滚动追加与"换一批"都取下一页
+const RECOMMEND_HOUR_MS = 60 * 60 * 1000;
+let recommendFreshIdx1h = 0; // 一小时内递增,距上次归零超过 1 小时从头算
+let recommendHourStart = Date.now();
 let nearBottom = false; // 上一次 scroll 时是否已在底部区域
 let refreshSpinTimer = 0;
 const seenBvids = new Set(); // 追加加载时用来过滤和已有卡片重复的 bvid
@@ -592,13 +596,23 @@ function refreshRecommend() {
   if (recommendLoading) return;
   window.scrollTo({ top: 0, behavior: 'auto' });
   nearBottom = false;
-  loadRecommend({ append: false });
+  loadRecommend({ append: false, reason: 'refresh' });
 }
 
-async function loadRecommend({ append = false } = {}) {
+async function loadRecommend({ append = false, reason = '' } = {}) {
   if (recommendLoading) return;
   recommendLoading = true;
   fabRefresh.disabled = true;
+
+  const freshIdx = recommendFreshIdx;
+  const now = Date.now();
+  if (now - recommendHourStart > RECOMMEND_HOUR_MS) {
+    recommendFreshIdx1h = 0;
+    recommendHourStart = now;
+  }
+  const freshIdx1h = recommendFreshIdx1h + 1;
+  const query = new URLSearchParams({ pn: freshIdx, fresh_idx_1h: freshIdx1h });
+  if (reason) query.set('reason', reason);
 
   let skeletons = [];
   if (append) {
@@ -613,7 +627,7 @@ async function loadRecommend({ append = false } = {}) {
   // 新卡片一张换一张顶掉骨架时,多出来的骨架留到下一批,不能随手撤掉(撤掉就少一行)
   let keptSkeletons = false;
   try {
-    const res = await fetch('/api/recommend');
+    const res = await fetch(`/api/recommend?${query}`);
     const data = await res.json();
 
     if (!res.ok || !data.list || data.list.length === 0) {
@@ -623,6 +637,8 @@ async function loadRecommend({ append = false } = {}) {
       return;
     }
 
+    recommendFreshIdx = freshIdx + 1;
+    recommendFreshIdx1h = freshIdx1h;
     skeletonReserve = data.list.length;
     document.getElementById('recommendTitle').textContent = data.personalized ? '为你推荐' : '热门推荐';
 
@@ -720,6 +736,9 @@ function showToast(text, durationMs) {
 
 // 登录后画质/推荐跟着登录态变化,刷新一次首页推荐
 function afterLoginSuccess() {
+  recommendFreshIdx = 1;
+  recommendFreshIdx1h = 0;
+  recommendHourStart = Date.now();
   refreshRecommend();
 }
 

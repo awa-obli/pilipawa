@@ -2767,26 +2767,28 @@ app.post("/api/danmaku/send", async (req, res) => {
  * 未登录: 全站热门榜 x/web-interface/popular(非个性化,匿名可访问)。
  * 已登录: 优先个性化推荐 x/web-interface/wbi/index/top/feed/rcmd(需登录 cookie + WBI 签名),
  * 失败时静默回退到热门榜,不让"换一批"直接报错。
- * 个性化接口真正校验 w_rid/wts,参数(口味新鲜度、刷新轮次等)才会被采纳。
- * "换一批" = 每次实时向上游要新内容,不做服务端缓存/去重。
+ * 翻页号 pn 由前端给: 首次为 1,滚动追加与"换一批"都取下一页,批次之间不重复。
  * -------------------------------------------------------------------- */
 
 const RECOMMEND_PAGE_SIZE = 20;
-const RECOMMEND_MAX_PAGE = 20; // 热门榜实际可用页数有限，随机范围内取，避免取到空页
+const RECOMMEND_Y_NUM = 4; // 每行视频数,用来把页数换算成 fetch_row 的行号
+const RECOMMEND_MAX_PAGE = 20; // 热门榜实际可用页数有限,超出后回绕,避免取到空页
 
-// 已登录时的个性化推荐流,"换一批"靠每次随机的 fresh_idx 让上游尽量返回不同内容
-async function fetchPersonalizedRecommend(req) {
+// 已登录时的个性化推荐流,翻页参数由前端传来的 pn / fresh_idx_1h 决定;
+// 换一批时 fetch_row 重置为 1,下滑仍按 pn 累计行号
+async function fetchPersonalizedRecommend(req, freshIdx, freshIdx1h, fetchRow) {
   const cookie = await getUpstreamCookie(req);
 
   const params = await signWbiParams({
-    y_num: 4,
+    y_num: RECOMMEND_Y_NUM,
     fresh_type: 4,
     feed_version: "V8",
-    fresh_idx_1h: Math.floor(Math.random() * 1000) + 1,
-    fetch_row: 1,
-    fresh_idx: Math.floor(Math.random() * 1000) + 1,
-    brush: 1,
+    fresh_idx_1h: freshIdx1h,
+    fetch_row: fetchRow,
+    fresh_idx: freshIdx,
+    brush: freshIdx,
     homepage_ver: 1,
+    web_location: 1430650, // 首页
     ps: RECOMMEND_PAGE_SIZE,
   });
 
@@ -2821,22 +2823,24 @@ async function fetchPersonalizedRecommend(req) {
 app.get("/api/recommend", async (req, res) => {
   try {
     const session = getSession(req, false);
+    const freshIdx = Math.max(parseInt(req.query.pn, 10) || 1, 1);
+    const freshIdx1h = Math.max(parseInt(req.query.fresh_idx_1h, 10) || freshIdx, 1);
+    const fetchRow =
+      req.query.reason === "refresh"
+        ? 1
+        : 1 + freshIdx * Math.ceil(RECOMMEND_PAGE_SIZE / RECOMMEND_Y_NUM);
 
     if (isLoggedIn(session)) {
       try {
-        const list = await fetchPersonalizedRecommend(req);
-        return res.json({ personalized: true, list });
+        const list = await fetchPersonalizedRecommend(req, freshIdx, freshIdx1h, fetchRow);
+        if (list.length) return res.json({ personalized: true, pn: freshIdx, list });
       } catch (err) {
         console.warn("个性化推荐加载失败,回退到热门榜:", err.message);
       }
     }
 
     const cookie = await getUpstreamCookie(req);
-
-    let pn = parseInt(req.query.pn, 10);
-    if (!pn || pn < 1) {
-      pn = Math.floor(Math.random() * RECOMMEND_MAX_PAGE) + 1;
-    }
+    const pn = ((freshIdx - 1) % RECOMMEND_MAX_PAGE) + 1;
 
     const url = new URL("https://api.bilibili.com/x/web-interface/popular");
     url.searchParams.set("pn", String(pn));
@@ -4302,6 +4306,18 @@ function mapMessagePreview(msgType, content, status) {
   return "[消息]";
 }
 
+// 消息记录里的表情映射: e_infos 给这一页用到的表情(正文占位符 → 图片)。
+// 正文里的老表情名会被上游转成 "[tv_xxx]",面板里不一定是这个名字,靠它来画
+function mapMessageEmotes(eInfos) {
+  return (Array.isArray(eInfos) ? eInfos : [])
+    .map((e) => ({
+      text: decodeHtmlEntities((e && e.text) || ""),
+      url: normalizeResourceUrl(e && (e.gif_url || e.url || e.uri)),
+      size: e && e.size === 2 ? 2 : 1,
+    }))
+    .filter((e) => e.text && e.url);
+}
+
 // 一条私信 → 前端模型。isMine 用当前账号 mid 比对,雪花序列号按字符串传。
 // status 是上游的 msg_status: 1=被撤回(上游照样把正文给出来,取不取用只能看它)、2=被系统撤回
 function mapMessageItem(msg, myMid) {
@@ -4622,6 +4638,7 @@ app.get("/api/message/history", async (req, res) => {
     res.json({
       code: 0,
       list,
+      emotes: mapMessageEmotes(body.e_infos),
       hasMore: messageHasMore(body, beginSeqno),
       minSeqno: String(body.min_seqno || ""),
     });
@@ -4726,6 +4743,12 @@ app.post("/api/message/send", async (req, res) => {
       csrf: session.biliJct || "",
       csrf_token: session.biliJct || "",
     });
+
+    // 正文里有表情占位符时按新版表情包发;不声明(默认旧版)上游会把
+    // [笑哭] 这类老名字自动转成 [tv_笑哭]
+    if (!imageUrl && /\[[^\[\]\n]{1,40}\]/.test(text)) {
+      form.set("msg[new_face_version]", "1");
+    }
 
     // 该接口要 WBI 签名,不签容易被当成非浏览器请求
     const signed = await signWbiParams({
